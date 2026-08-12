@@ -1,0 +1,18 @@
+services:
+  recetas:
+    build:
+      context: ./web
+    image: recetas:latest
+    container_name: recetas
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: file:/app/data/recetas.db
+      PORT: "3000"
+    volumes:
+      - ./data/recetas.db:/app/data/recetas.db
+    mem_limit: 768m

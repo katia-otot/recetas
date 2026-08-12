@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+.env
+.env.*
+!.env.example
+dev.db
+data/structure-log*.txt
+.git
+*.md
+.agents
+.claude
+.windsurf
