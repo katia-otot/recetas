@@ -1,0 +1,29 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# deps / build
+node_modules/
+.next/
+out/
+build/
+coverage/
+
+# prisma generated client
+src/generated/prisma/
+web/src/generated/prisma/
+
+# agent skill copies (not part of the app)
+web/.agents/
+web/.claude/
+web/.windsurf/
+
+# local logs
+web/data/structure-log*.txt
+
+# misc
+.DS_Store
+*.pem
+*.tsbuildinfo
+next-env.d.ts
