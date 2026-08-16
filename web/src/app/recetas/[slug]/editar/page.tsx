@@ -3,7 +3,9 @@ import { prisma } from "@/lib/db";
 import {
   formatIngredient,
   parseStoredIngredients,
+  type CfeData,
 } from "@/lib/recipe-schema";
+import { serializeCfeForEdit } from "@/lib/sync-recipe-formats";
 import { EditRecipeForm } from "@/components/EditRecipeForm";
 
 type PageProps = {
@@ -24,6 +26,10 @@ export default async function EditRecipePage({ params }: PageProps) {
   const cuisines: string[] = recipe.cuisineJson
     ? JSON.parse(recipe.cuisineJson)
     : [];
+  const cfe: CfeData | null = recipe.cfeJson
+    ? JSON.parse(recipe.cfeJson)
+    : null;
+  const cfeEdit = serializeCfeForEdit(cfe);
 
   return (
     <EditRecipeForm
@@ -36,6 +42,11 @@ export default async function EditRecipePage({ params }: PageProps) {
       extraNotes={recipe.extraNotes ?? ""}
       tagsText={tags.join(", ")}
       cuisinesText={cuisines.join(", ")}
+      cfePrepText={cfeEdit.prepText}
+      cfeIngredientsText={cfeEdit.ingredientsText}
+      cfeActionsText={cfeEdit.actionsText}
+      cfeFinalText={cfeEdit.finalText}
+      hasCfe={Boolean(cfe)}
     />
   );
 }

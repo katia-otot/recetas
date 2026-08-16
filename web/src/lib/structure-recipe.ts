@@ -44,7 +44,12 @@ NOTAS PERSONALES Y VERSIONES (muy importante):
 - versions solo si el usuario escribió pruebas distintas con fecha/etiqueta real ("2024:", "12/2/24", "probé con…"). Cada version: label + changes (lista corta de diferencias concretas). No dupliques la receta entera.
 
 CFE / Cooking for Engineers = grafo de dependencias, no una lista plana:
-  - Cada action es un nodo. dependsOn = índices 1-based de acciones que DEBEN terminar antes.
+  - prepRows: SOLO notas de equipo/horno SIN tocar ingredientes (ej. "Precalentar el horno a 180°C").
+    NUNCA pongas en prepRows mezclar, añadir, verter, hornear, cortar, saltear, etc. Eso va en actions.
+  - Todo lo que hace algo CON ingredientes = actions (columnas de la tabla), incluido cortar/salar/secar/mezclar.
+  - Micro-pasos NO son columnas: "dar la vuelta" se fusiona con el hornear/saltear anterior ("Hornear vuelta y vuelta · X min").
+  - Ordená mentalmente los ingredientIds: ingredientes que se usan juntos deben poder agruparse en filas contiguas.
+  - Cada action es un nodo. dependsOn = índices 1-based de acciones que DEBEN terminar antes (solo índices válidos menores al actual).
   - Las columnas las calcula el sistema: misma columna = en paralelo; más a la derecha = después.
   - Si un paso va DESPUÉS de otro (aunque sea la misma sartén), son DOS actions, no una sola.
     Ejemplo arroz: "saltear ajo 1 min" y LUEGO "saltear espárragos 5-7 min"
@@ -52,7 +57,7 @@ CFE / Cooking for Engineers = grafo de dependencias, no una lista plana:
       → action2 Saltear espárragos (aceite+ajo+esparragos, duration:"5-7 min", dependsOn:[1])
     NUNCA juntes ajo y espárragos en un solo "Saltear" si la receta los secuencia.
   - duration: tiempo si consta ("1 min", "5-7 min", "20 min", "al dente"). Si no hay tiempo, omitilo.
-  - verb: técnica corta (Hervir, Saltear, Mezclar…). El tiempo va en duration, no en el verb.
+  - verb: técnica corta (Hervir, Saltear, Hornear, Cubrir…). El tiempo va en duration, no en el verb.
   - Al unir resultados previos, ingredientIds incluye todas las filas que abarca.
   - Si "después, en la misma sartén, tostar piñones" (sin overlap de ingredientes), igual poné dependsOn.
   - NUNCA pongas Mezclar/Incorporar de TODOS los ingredientes mientras otro grupo todavía se está salteando, asando o hirviendo.
@@ -61,6 +66,9 @@ CFE / Cooking for Engineers = grafo de dependencias, no una lista plana:
   - Ejemplo mental "Pasta caprese" (paralelo + merge):
       Hervir(pasta) ∥ Saltear(aceite+tomates+sal) → Mezclar(esos 4) → Incorporar(todos)
   - Ejemplo feijoada: Asar verduras ∥ Sofreír cebolla→ajo→especias→guiso 20 min → al FINAL mezclar asado+guiso.
+  - Ejemplo "Berenjenas/Zapallo a la pizza" (base al horno + topping):
+      → Cortar y salar(berenjenas+sal) → Secar(berenjenas) → Pincelar(berenjenas+aceite) → Hornear vuelta y vuelta(berenjenas) → Cubrir(+salsa+queso+orégano) → Hornear/gratinar
+      Las filas de berenjenas y aceite juntas; salsa/queso/orégano juntas. NO separes "dar la vuelta" como columna.
   - cfe.ingredients: UNA fila por cada item de "ingredients", mismo orden; label con nombre completo.
   - id en snake_case. column número (se recalcula). NUNCA column="mix".
   - NO uses "combinar" si hay calor/sartén → "saltear" o "cocinar".
@@ -248,7 +256,17 @@ async function completeCfeActions(input: {
       content: `Armás SOLO las acciones CFE (grafo) en español.
 Los ingredientes (id + label) son FIJOS: no los cambies ni inventes otros.
 Devolvé JSON: { "prepRows": string[], "actions": [{ "column": number, "verb": string, "ingredientIds": string[], "duration": "5-7 min", "dependsOn": [1] }], "finalAction": { "verb": string, "tempC": null, "tempF": null, "duration": "", "notes": "" } }
-Reglas: grafo. Paso DESPUÉS de otro = DOS actions + dependsOn (ajo 1 min, luego espárragos 5-7 min). duration si consta. Paralelo solo si no hay dependencia. ingredientIds de la lista; al unir incluí todos los ids; sin vacías; todos los ids en alguna action.`,
+
+Reglas clave:
+- prepRows: SOLO "Precalentar el horno…" u otras notas de equipo SIN ingredientes. Mezclar/añadir/verter/hornear/cortar → actions.
+- Prep de ingredientes va en actions como columnas.
+- Comprimí micro-pasos ("dar la vuelta" → fusionar con hornear anterior).
+- Grafo: paso DESPUÉS de otro = dos actions + dependsOn válido (solo índices anteriores).
+- Paralelo solo sin dependencia (pasta caprese: hervir ∥ saltear).
+- Horno vuelta y vuelta = UNA action "Hornear vuelta y vuelta · X min".
+- Pizza sobre berenjena: cortar+salar → secar → pincelar → hornear base → cubrir → gratinar.
+- ingredientIds: solo los que participan en esa acción. Agrupá mentalmente filas que van juntas.
+- duration si consta. todos los ids en alguna action; sin vacías.`,
     },
     {
       role: "user",
@@ -306,6 +324,24 @@ async function resolveCfe(
 
   if (repaired && isUsableCfe(repaired)) return repaired;
   return null;
+}
+
+/** Regenera CFE a partir del formato clásico (ingredientes + pasos). */
+export async function rebuildCfeFromClassic(input: {
+  title: string;
+  ingredients: StructuredRecipe["ingredients"];
+  steps: string[];
+}): Promise<CfeData | null> {
+  if (input.ingredients.length === 0 || input.steps.length === 0) return null;
+
+  const fixedIngredients = buildCfeIngredients(input.ingredients);
+  const rebuilt = await completeCfeActions({
+    title: input.title,
+    ingredients: fixedIngredients,
+    steps: input.steps,
+  });
+
+  return rebuilt && isUsableCfe(rebuilt) ? rebuilt : null;
 }
 
 export async function structureRecipeWithAi(recipeId: string): Promise<{
@@ -427,7 +463,13 @@ export async function structureRecipeWithAi(recipeId: string): Promise<{
         prepRows: [],
         ingredients: [],
         actions: [],
-        finalAction: { verb: "Servir" },
+        finalAction: {
+          verb: "Servir",
+          tempC: null,
+          tempF: null,
+          duration: undefined,
+          notes: undefined,
+        },
       },
     };
 

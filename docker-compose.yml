@@ -6,7 +6,9 @@ services:
     container_name: recetas
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # The cloud firewall only allows 80/443/5926 from the internet.
+      # 80 is pixelweb; 443 is the only free public HTTP(S) port.
+      - "443:3000"
     env_file:
       - .env
     environment:

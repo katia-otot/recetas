@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SiteHeader } from "@/components/SiteHeader";
 
+type EditMode = "classic" | "cfe";
+
 type EditRecipeFormProps = {
   slug: string;
   title: string;
@@ -13,6 +15,11 @@ type EditRecipeFormProps = {
   extraNotes: string;
   tagsText: string;
   cuisinesText: string;
+  cfePrepText: string;
+  cfeIngredientsText: string;
+  cfeActionsText: string;
+  cfeFinalText: string;
+  hasCfe: boolean;
 };
 
 const fieldClass =
@@ -20,12 +27,19 @@ const fieldClass =
 
 export function EditRecipeForm(props: EditRecipeFormProps) {
   const router = useRouter();
+  const [mode, setMode] = useState<EditMode>("classic");
   const [title, setTitle] = useState(props.title);
   const [ingredientsText, setIngredientsText] = useState(props.ingredientsText);
   const [stepsText, setStepsText] = useState(props.stepsText);
   const [extraNotes, setExtraNotes] = useState(props.extraNotes);
   const [tagsText, setTagsText] = useState(props.tagsText);
   const [cuisinesText, setCuisinesText] = useState(props.cuisinesText);
+  const [cfePrepText, setCfePrepText] = useState(props.cfePrepText);
+  const [cfeIngredientsText, setCfeIngredientsText] = useState(
+    props.cfeIngredientsText,
+  );
+  const [cfeActionsText, setCfeActionsText] = useState(props.cfeActionsText);
+  const [cfeFinalText, setCfeFinalText] = useState(props.cfeFinalText);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,17 +49,33 @@ export function EditRecipeForm(props: EditRecipeFormProps) {
     setError(null);
 
     try {
+      const body =
+        mode === "classic"
+          ? {
+              syncFrom: "classic",
+              title,
+              ingredientsText,
+              stepsText,
+              extraNotes,
+              tagsText,
+              cuisinesText,
+            }
+          : {
+              syncFrom: "cfe",
+              title,
+              extraNotes,
+              tagsText,
+              cuisinesText,
+              cfePrepText,
+              cfeIngredientsText,
+              cfeActionsText,
+              cfeFinalText,
+            };
+
       const res = await fetch(`/api/recetas/${props.slug}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          ingredientsText,
-          stepsText,
-          extraNotes,
-          tagsText,
-          cuisinesText,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "No se pudo guardar");
@@ -72,6 +102,37 @@ export function EditRecipeForm(props: EditRecipeFormProps) {
           Editar receta
         </h1>
 
+        <div className="mt-4 grid grid-cols-2 gap-1 rounded-xl border border-stone-300 bg-white p-1 text-sm">
+          <button
+            type="button"
+            onClick={() => setMode("classic")}
+            className={`min-h-11 rounded-lg px-2 py-2 ${
+              mode === "classic"
+                ? "bg-amber-600 text-white"
+                : "text-stone-600 hover:text-stone-900"
+            }`}
+          >
+            Formato clásico
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("cfe")}
+            className={`min-h-11 rounded-lg px-2 py-2 ${
+              mode === "cfe"
+                ? "bg-amber-600 text-white"
+                : "text-stone-600 hover:text-stone-900"
+            }`}
+          >
+            Tabla CFE
+          </button>
+        </div>
+
+        <p className="mt-3 text-xs leading-relaxed text-stone-500">
+          {mode === "classic"
+            ? "Si cambiás ingredientes o pasos, al guardar se regenera la tabla CFE."
+            : "Si editás la CFE, al guardar se actualizan ingredientes y pasos del formato clásico."}
+        </p>
+
         <form onSubmit={onSubmit} className="mt-6 space-y-5 sm:mt-8">
           <div>
             <label className="block text-sm font-medium text-stone-700" htmlFor="title">
@@ -86,34 +147,119 @@ export function EditRecipeForm(props: EditRecipeFormProps) {
             />
           </div>
 
-          <div>
-            <label
-              className="block text-sm font-medium text-stone-700"
-              htmlFor="ingredients"
-            >
-              Ingredientes (uno por línea)
-            </label>
-            <textarea
-              id="ingredients"
-              rows={8}
-              value={ingredientsText}
-              onChange={(e) => setIngredientsText(e.target.value)}
-              className={`${fieldClass} font-mono text-sm`}
-            />
-          </div>
+          {mode === "classic" ? (
+            <>
+              <div>
+                <label
+                  className="block text-sm font-medium text-stone-700"
+                  htmlFor="ingredients"
+                >
+                  Ingredientes (uno por línea)
+                </label>
+                <textarea
+                  id="ingredients"
+                  rows={8}
+                  value={ingredientsText}
+                  onChange={(e) => setIngredientsText(e.target.value)}
+                  className={`${fieldClass} font-mono text-sm`}
+                />
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium text-stone-700" htmlFor="steps">
-              Pasos (uno por línea)
-            </label>
-            <textarea
-              id="steps"
-              rows={8}
-              value={stepsText}
-              onChange={(e) => setStepsText(e.target.value)}
-              className={`${fieldClass} font-mono text-sm`}
-            />
-          </div>
+              <div>
+                <label
+                  className="block text-sm font-medium text-stone-700"
+                  htmlFor="steps"
+                >
+                  Pasos (uno por línea)
+                </label>
+                <textarea
+                  id="steps"
+                  rows={8}
+                  value={stepsText}
+                  onChange={(e) => setStepsText(e.target.value)}
+                  className={`${fieldClass} font-mono text-sm`}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              {!props.hasCfe && (
+                <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  Esta receta todavía no tiene CFE. Podés crearla acá o guardar
+                  desde el formato clásico para que se genere sola.
+                </p>
+              )}
+
+              <div>
+                <label
+                  className="block text-sm font-medium text-stone-700"
+                  htmlFor="cfe-prep"
+                >
+                  Prep (solo horno/equipo, uno por línea)
+                </label>
+                <textarea
+                  id="cfe-prep"
+                  rows={2}
+                  value={cfePrepText}
+                  onChange={(e) => setCfePrepText(e.target.value)}
+                  className={`${fieldClass} font-mono text-sm`}
+                  placeholder="Precalentar el horno a 180°C"
+                />
+              </div>
+
+              <div>
+                <label
+                  className="block text-sm font-medium text-stone-700"
+                  htmlFor="cfe-ingredients"
+                >
+                  Ingredientes CFE (id | etiqueta)
+                </label>
+                <textarea
+                  id="cfe-ingredients"
+                  rows={8}
+                  value={cfeIngredientsText}
+                  onChange={(e) => setCfeIngredientsText(e.target.value)}
+                  className={`${fieldClass} font-mono text-sm`}
+                  placeholder={"pasta | 170 g pasta fusilli\naceite | aceite de oliva"}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="block text-sm font-medium text-stone-700"
+                  htmlFor="cfe-actions"
+                >
+                  Acciones (Verbo | ids | duración | depends:1,2)
+                </label>
+                <textarea
+                  id="cfe-actions"
+                  rows={10}
+                  value={cfeActionsText}
+                  onChange={(e) => setCfeActionsText(e.target.value)}
+                  className={`${fieldClass} font-mono text-sm`}
+                  placeholder={
+                    "1. Hervir | pasta | al dente\n2. Saltear | aceite,tomates | 3 min\n3. Mezclar | pasta,aceite,tomates | depends:1,2"
+                  }
+                />
+              </div>
+
+              <div>
+                <label
+                  className="block text-sm font-medium text-stone-700"
+                  htmlFor="cfe-final"
+                >
+                  Acción final
+                </label>
+                <input
+                  id="cfe-final"
+                  value={cfeFinalText}
+                  onChange={(e) => setCfeFinalText(e.target.value)}
+                  className={fieldClass}
+                  placeholder="Servir | inmediatamente"
+                />
+              </div>
+            </>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-stone-700" htmlFor="notes">
@@ -169,7 +315,11 @@ export function EditRecipeForm(props: EditRecipeFormProps) {
               disabled={saving}
               className="min-h-11 rounded-xl bg-amber-600 px-4 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50 sm:w-auto"
             >
-              {saving ? "Guardando…" : "Guardar cambios"}
+              {saving
+                ? mode === "classic"
+                  ? "Guardando y regenerando CFE…"
+                  : "Guardando y actualizando clásico…"
+                : "Guardar cambios"}
             </button>
             <Link
               href={`/recetas/${props.slug}`}

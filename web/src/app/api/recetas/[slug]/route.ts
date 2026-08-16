@@ -3,9 +3,16 @@ import { prisma } from "@/lib/db";
 import {
   formatIngredient,
   parseStoredIngredients,
+  type CfeData,
   type Ingredient,
 } from "@/lib/recipe-schema";
 import { uniqueSlug } from "@/lib/slug";
+import { rebuildCfeFromClassic } from "@/lib/structure-recipe";
+import {
+  classicFromCfe,
+  classicSignature,
+  parseCfeFromEdit,
+} from "@/lib/sync-recipe-formats";
 
 type RouteContext = { params: Promise<{ slug: string }> };
 
@@ -68,6 +75,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     const body = await request.json();
+    const syncFrom = body.syncFrom === "cfe" ? "cfe" : "classic";
+
     const title =
       typeof body.title === "string" ? body.title.trim() : recipe.title;
     if (!title) {
@@ -77,18 +86,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const previousIngredients = recipe.ingredientsJson
       ? parseStoredIngredients(JSON.parse(recipe.ingredientsJson))
       : [];
-
-    const ingredients =
-      typeof body.ingredientsText === "string"
-        ? parseIngredientLines(body.ingredientsText, previousIngredients)
-        : previousIngredients;
-
-    const steps =
-      typeof body.stepsText === "string"
-        ? linesToList(body.stepsText)
-        : recipe.stepsJson
-          ? JSON.parse(recipe.stepsJson)
-          : [];
+    const previousSteps: string[] = recipe.stepsJson
+      ? JSON.parse(recipe.stepsJson)
+      : [];
+    const previousCfe: CfeData | null = recipe.cfeJson
+      ? JSON.parse(recipe.cfeJson)
+      : null;
 
     const extraNotes =
       typeof body.extraNotes === "string"
@@ -115,6 +118,76 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           ? JSON.parse(recipe.cuisineJson)
           : [];
 
+    let ingredients = previousIngredients;
+    let steps = previousSteps;
+    let cfe: CfeData | null = previousCfe;
+    let syncNote: string | null = null;
+
+    if (syncFrom === "cfe") {
+      const parsed = parseCfeFromEdit({
+        prepText: typeof body.cfePrepText === "string" ? body.cfePrepText : "",
+        ingredientsText:
+          typeof body.cfeIngredientsText === "string"
+            ? body.cfeIngredientsText
+            : "",
+        actionsText:
+          typeof body.cfeActionsText === "string" ? body.cfeActionsText : "",
+        finalText:
+          typeof body.cfeFinalText === "string" ? body.cfeFinalText : "Servir",
+      });
+
+      if (!parsed) {
+        return NextResponse.json(
+          {
+            error:
+              "No se pudo armar la tabla CFE. Revisá ingredientes (id | label) y acciones (Verbo | ids).",
+          },
+          { status: 400 },
+        );
+      }
+
+      cfe = parsed;
+      const classic = classicFromCfe(parsed);
+      ingredients = classic.ingredients;
+      steps = classic.steps;
+      syncNote = "CFE guardada; se actualizó el formato clásico.";
+    } else {
+      ingredients =
+        typeof body.ingredientsText === "string"
+          ? parseIngredientLines(body.ingredientsText, previousIngredients)
+          : previousIngredients;
+
+      steps =
+        typeof body.stepsText === "string"
+          ? linesToList(body.stepsText)
+          : previousSteps;
+
+      const before = classicSignature({
+        ingredients: previousIngredients,
+        steps: previousSteps,
+      });
+      const after = classicSignature({ ingredients, steps });
+      const classicChanged = before !== after;
+
+      if (classicChanged && ingredients.length > 0 && steps.length > 0) {
+        const rebuilt = await rebuildCfeFromClassic({
+          title,
+          ingredients,
+          steps,
+        });
+        if (rebuilt) {
+          cfe = rebuilt;
+          syncNote = "Formato clásico guardado; se regeneró la tabla CFE.";
+        } else {
+          // Clásico cambió pero no se pudo regenerar: invalidar CFE vieja
+          // para no mostrar una tabla desactualizada.
+          cfe = null;
+          syncNote =
+            "Formato clásico guardado; no se pudo regenerar la CFE (revisá pasos/ingredientes).";
+        }
+      }
+    }
+
     let nextSlug = recipe.slug;
     if (title !== recipe.title) {
       nextSlug = await uniqueSlug(title, async (candidate) => {
@@ -133,6 +206,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         slug: nextSlug,
         ingredientsJson: JSON.stringify(ingredients),
         stepsJson: JSON.stringify(steps),
+        cfeJson: cfe ? JSON.stringify(cfe) : null,
         ingredientIndex: JSON.stringify(
           ingredients.map((i) => i.name.toLowerCase()),
         ),
@@ -141,14 +215,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         extraNotes,
         status:
           ingredients.length > 0 && steps.length > 0
-            ? recipe.cfeJson
-              ? "estructurado"
-              : recipe.status
+            ? "estructurado"
             : recipe.status,
       },
     });
 
-    return NextResponse.json({ ok: true, slug: updated.slug });
+    return NextResponse.json({
+      ok: true,
+      slug: updated.slug,
+      syncNote,
+      hasCfe: Boolean(cfe),
+    });
   } catch (error) {
     return NextResponse.json(
       { error: (error as Error).message },

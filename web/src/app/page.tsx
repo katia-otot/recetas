@@ -21,6 +21,8 @@ export default async function Home({ searchParams }: HomeProps) {
                 { rawText: { contains: query } },
                 { extraNotes: { contains: query } },
                 { ingredientIndex: { contains: query } },
+                { tagsJson: { contains: query } },
+                { cuisineJson: { contains: query } },
               ],
             }
           : {}),
@@ -65,7 +67,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
         <form className="mb-6 sm:mb-8" action="/" method="get">
           <label className="block text-sm font-medium text-stone-700" htmlFor="q">
-            Buscar
+            Buscar por título, ingredientes, etiquetas o cocina
           </label>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <input
@@ -74,7 +76,7 @@ export default async function Home({ searchParams }: HomeProps) {
               type="search"
               enterKeyHint="search"
               defaultValue={query}
-              placeholder="ej. garbanzos, tofu, pasta…"
+              placeholder="ej. italiana, garbanzos, tofu, pasta…"
               className="min-h-11 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-stone-900 shadow-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
             />
             <button

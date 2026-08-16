@@ -98,7 +98,7 @@ export const CfeSchema = z.object({
     .preprocess((value) => {
       if (typeof value === "string") {
         const verb = value.trim() || "Servir";
-        return { verb, tempC: null, tempF: null };
+        return { verb, tempC: null, tempF: null, duration: undefined, notes: undefined };
       }
       return value;
     }, z.object({
@@ -157,6 +157,8 @@ export const StructuredRecipeSchema = z.object({
           verb: "Servir",
           tempC: null,
           tempF: null,
+          duration: undefined,
+          notes: undefined,
         },
       },
   ),

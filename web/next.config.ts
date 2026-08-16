@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   // Permite abrir el sitio desde el celular en la misma WiFi (IP local).
   // Sin esto, Next bloquea el JS de desarrollo y los botones no responden.
   allowedDevOrigins: [

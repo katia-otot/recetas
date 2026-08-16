@@ -1,8 +1,17 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import {
   formatCfeActionLabel,
   layoutActionGraph,
+  refineStoredCfe,
+  reorderIngredientsForActions,
 } from "@/lib/cfe";
 import type { CfeData } from "@/lib/recipe-schema";
+import {
+  readHaveIngredients,
+  writeHaveIngredients,
+} from "@/lib/have-ingredients";
 
 type CellPlacement = {
   row: number;
@@ -10,6 +19,7 @@ type CellPlacement = {
   rowspan: number;
   content: string;
   kind: "ingredient" | "action" | "final" | "empty";
+  ingredientId?: string;
 };
 
 type PreparedAction = {
@@ -17,6 +27,22 @@ type PreparedAction = {
   verb: string;
   rows: number[];
 };
+
+/** Agrupa filas contiguas: nunca rowspan sobre ingredientes que no están en la acción. */
+function contiguousRuns(rows: number[]): number[][] {
+  if (rows.length === 0) return [];
+  const sorted = [...rows].sort((a, b) => a - b);
+  const runs: number[][] = [[sorted[0]]];
+  for (let i = 1; i < sorted.length; i++) {
+    const run = runs[runs.length - 1];
+    if (sorted[i] === run[run.length - 1] + 1) {
+      run.push(sorted[i]);
+    } else {
+      runs.push([sorted[i]]);
+    }
+  }
+  return runs;
+}
 
 function prepareActions(cfe: CfeData): PreparedAction[] {
   const idToRow = new Map(cfe.ingredients.map((ing, i) => [ing.id, i]));
@@ -59,9 +85,18 @@ function buildPlacements(cfe: CfeData): {
   colCount: number;
   cells: CellPlacement[];
   skip: Set<string>;
+  orderedIngredients: CfeData["ingredients"];
 } {
-  const rowCount = cfe.ingredients.length;
-  const actions = prepareActions(cfe);
+  const orderedIngredients = reorderIngredientsForActions(
+    cfe.ingredients,
+    cfe.actions,
+  );
+  const ordered: CfeData = {
+    ...cfe,
+    ingredients: orderedIngredients,
+  };
+  const rowCount = ordered.ingredients.length;
+  const actions = prepareActions(ordered);
   const maxActionCol = actions.reduce((m, a) => Math.max(m, a.column), 0);
   const finalCol = maxActionCol + 1;
   const colCount = Math.max(finalCol + 1, 2);
@@ -72,36 +107,36 @@ function buildPlacements(cfe: CfeData): {
     Array.from({ length: colCount }, () => false),
   );
 
-  cfe.ingredients.forEach((ing, row) => {
+  ordered.ingredients.forEach((ing, row) => {
     cells.push({
       row,
       col: 0,
       rowspan: 1,
       content: ing.label,
       kind: "ingredient",
+      ingredientId: ing.id,
     });
     occupied[row][0] = true;
   });
 
   for (const action of actions) {
-    const startRow = action.rows[0];
-    const endRow = action.rows[action.rows.length - 1];
-    const rowspan = endRow - startRow + 1;
+    for (const run of contiguousRuns(action.rows)) {
+      const startRow = run[0];
+      const rowspan = run.length;
+      if (occupied[startRow][action.column]) continue;
 
-    // Si ya hay otra acción en esa celda (mismo col/fila), no pisar.
-    if (occupied[startRow][action.column]) continue;
+      cells.push({
+        row: startRow,
+        col: action.column,
+        rowspan,
+        content: action.verb,
+        kind: "action",
+      });
 
-    cells.push({
-      row: startRow,
-      col: action.column,
-      rowspan,
-      content: action.verb,
-      kind: "action",
-    });
-
-    for (let r = startRow; r <= endRow; r++) {
-      occupied[r][action.column] = true;
-      if (r > startRow) skip.add(`${r}:${action.column}`);
+      for (let r = startRow; r < startRow + rowspan; r++) {
+        occupied[r][action.column] = true;
+        if (r > startRow) skip.add(`${r}:${action.column}`);
+      }
     }
   }
 
@@ -110,7 +145,7 @@ function buildPlacements(cfe: CfeData): {
       row: 0,
       col: finalCol,
       rowspan: rowCount,
-      content: formatFinalAction(cfe.finalAction),
+      content: formatFinalAction(ordered.finalAction),
       kind: "final",
     });
     for (let r = 0; r < rowCount; r++) {
@@ -119,7 +154,6 @@ function buildPlacements(cfe: CfeData): {
     }
   }
 
-  // Huecos → "—" para que se vea cuándo entra cada ingrediente.
   for (let row = 0; row < rowCount; row++) {
     for (let col = 1; col < finalCol; col++) {
       if (occupied[row][col] || skip.has(`${row}:${col}`)) continue;
@@ -133,7 +167,7 @@ function buildPlacements(cfe: CfeData): {
     }
   }
 
-  return { rowCount, colCount, cells, skip };
+  return { rowCount, colCount, cells, skip, orderedIngredients };
 }
 
 function formatFinalAction(final: CfeData["finalAction"]): string {
@@ -154,7 +188,27 @@ function cellAt(
 }
 
 export function CfeTable({ cfe, title }: { cfe: CfeData; title: string }) {
-  const { rowCount, colCount, cells, skip } = buildPlacements(cfe);
+  const displayCfe = useMemo(() => refineStoredCfe(cfe) ?? cfe, [cfe]);
+  const { rowCount, colCount, cells, skip, orderedIngredients } = useMemo(
+    () => buildPlacements(displayCfe),
+    [displayCfe],
+  );
+
+  const [haveIds, setHaveIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setHaveIds(readHaveIngredients(title));
+  }, [title]);
+
+  function toggleHave(ingredientId: string) {
+    setHaveIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(ingredientId)) next.delete(ingredientId);
+      else next.add(ingredientId);
+      writeHaveIngredients(title, next);
+      return next;
+    });
+  }
 
   if (rowCount === 0) {
     return (
@@ -164,18 +218,21 @@ export function CfeTable({ cfe, title }: { cfe: CfeData; title: string }) {
     );
   }
 
+  const rowIdByIndex = orderedIngredients.map((ing) => ing.id);
+
   return (
     <div className="min-w-0 max-w-full">
-      {cfe.prepRows.length > 0 && (
+      {displayCfe.prepRows.length > 0 && (
         <div className="mb-3 space-y-1 break-words rounded-xl border border-green-300 bg-green-50 px-3 py-2 text-sm text-stone-800">
-          {cfe.prepRows.map((line) => (
+          {displayCfe.prepRows.map((line) => (
             <p key={line}>{line}</p>
           ))}
         </div>
       )}
 
-      <p className="mb-2 text-xs text-stone-500 sm:hidden">
-        Deslizá la tabla hacia los costados →
+      <p className="mb-2 text-xs text-stone-500">
+        Tocá un ingrediente para marcar que ya lo tenés.
+        <span className="sm:hidden"> Deslizá la tabla →</span>
       </p>
 
       <div className="max-w-full overflow-x-auto overscroll-x-contain pb-1">
@@ -184,52 +241,107 @@ export function CfeTable({ cfe, title }: { cfe: CfeData; title: string }) {
             {title} — Cooking for Engineers
           </caption>
           <tbody>
-            {Array.from({ length: rowCount }, (_, row) => (
-              <tr key={row}>
-                {Array.from({ length: colCount }, (_, col) => {
-                  if (skip.has(`${row}:${col}`)) return null;
-                  const placement = cellAt(cells, row, col);
-                  if (!placement) return null;
+            {Array.from({ length: rowCount }, (_, row) => {
+              const rowHave = haveIds.has(rowIdByIndex[row]);
+              return (
+                <tr key={row}>
+                  {Array.from({ length: colCount }, (_, col) => {
+                    if (skip.has(`${row}:${col}`)) return null;
+                    const placement = cellAt(cells, row, col);
+                    if (!placement) return null;
 
-                  const bg =
-                    placement.kind === "ingredient"
-                      ? "bg-white"
-                      : placement.kind === "final"
-                        ? "bg-amber-50"
-                        : placement.kind === "empty"
-                          ? "bg-white"
-                          : "bg-green-50";
+                    const isIngredient = placement.kind === "ingredient";
+                    const checked =
+                      isIngredient &&
+                      placement.ingredientId != null &&
+                      haveIds.has(placement.ingredientId);
 
-                  const sticky =
-                    placement.kind === "ingredient"
+                    const bg = checked
+                      ? "bg-green-200"
+                      : placement.kind === "ingredient"
+                        ? rowHave
+                          ? "bg-green-200"
+                          : "bg-white"
+                        : placement.kind === "final"
+                          ? "bg-amber-50"
+                          : placement.kind === "empty"
+                            ? rowHave
+                              ? "bg-green-50"
+                              : "bg-white"
+                            : rowHave
+                              ? "bg-green-100"
+                              : "bg-green-50";
+
+                    const sticky = isIngredient
                       ? "sticky left-0 z-10 shadow-[2px_0_0_0_rgba(22,101,52,0.35)]"
                       : "";
 
-                  const align =
-                    placement.kind === "action" || placement.kind === "final"
-                      ? "text-center align-middle"
-                      : "align-top";
+                    const align =
+                      placement.kind === "action" || placement.kind === "final"
+                        ? "text-center align-middle"
+                        : "align-middle";
 
-                  return (
-                    <td
-                      key={col}
-                      rowSpan={
-                        placement.rowspan > 1 ? placement.rowspan : undefined
-                      }
-                      className={`max-w-[11rem] border border-green-600 px-2 py-2 text-stone-800 sm:max-w-none sm:px-3 ${bg} ${sticky} ${align} ${
-                        placement.kind === "empty" ? "text-stone-400" : ""
-                      } ${
-                        placement.kind !== "empty"
-                          ? "break-words [overflow-wrap:anywhere]"
-                          : ""
-                      }`}
-                    >
-                      {placement.content}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                    const width = isIngredient
+                      ? "w-[37.5vw] max-w-[37.5vw] sm:w-auto sm:max-w-[14rem]"
+                      : placement.kind === "empty"
+                        ? "min-w-[2.5rem]"
+                        : "min-w-[4.5rem] max-w-[9rem] sm:max-w-none";
+
+                    return (
+                      <td
+                        key={col}
+                        rowSpan={
+                          placement.rowspan > 1
+                            ? placement.rowspan
+                            : undefined
+                        }
+                        onClick={
+                          isIngredient && placement.ingredientId
+                            ? () => toggleHave(placement.ingredientId!)
+                            : undefined
+                        }
+                        onKeyDown={
+                          isIngredient && placement.ingredientId
+                            ? (event) => {
+                                if (
+                                  event.key === "Enter" ||
+                                  event.key === " "
+                                ) {
+                                  event.preventDefault();
+                                  toggleHave(placement.ingredientId!);
+                                }
+                              }
+                            : undefined
+                        }
+                        role={isIngredient ? "button" : undefined}
+                        tabIndex={isIngredient ? 0 : undefined}
+                        aria-pressed={isIngredient ? checked : undefined}
+                        title={
+                          isIngredient
+                            ? checked
+                              ? "Marcado: ya lo tenés (tocá para quitar)"
+                              : "Tocá para marcar que ya lo tenés"
+                            : undefined
+                        }
+                        className={`border border-green-600 px-2 py-2 text-stone-800 sm:px-3 ${width} ${bg} ${sticky} ${align} ${
+                          placement.kind === "empty" ? "text-stone-400" : ""
+                        } ${
+                          placement.kind !== "empty"
+                            ? "break-words [overflow-wrap:anywhere]"
+                            : ""
+                        } ${
+                          isIngredient
+                            ? "min-h-11 cursor-pointer select-none touch-manipulation active:bg-green-300"
+                            : ""
+                        }`}
+                      >
+                        {placement.content}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

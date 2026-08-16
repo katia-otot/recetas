@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { isUsableCfe } from "@/lib/cfe";
+import { isUsableCfe, refineStoredCfe } from "@/lib/cfe";
 import {
   parseStoredIngredients,
   parseStoredVersions,
@@ -33,7 +33,7 @@ export default async function RecipePage({ params }: PageProps) {
   const parsedCfe: CfeData | null = recipe.cfeJson
     ? JSON.parse(recipe.cfeJson)
     : null;
-  const cfe = isUsableCfe(parsedCfe) ? parsedCfe : null;
+  const cfe = refineStoredCfe(parsedCfe) ?? (isUsableCfe(parsedCfe) ? parsedCfe : null);
   const versions = recipe.versionsJson
     ? parseStoredVersions(JSON.parse(recipe.versionsJson))
     : [];

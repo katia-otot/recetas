@@ -62,7 +62,7 @@ export function RecipeFormatTabs({
       {tab === "basica" && hasBasic && (
         <div className="mt-2">
           {ingredients.length > 0 && (
-            <IngredientList ingredients={ingredients} />
+            <IngredientList title={title} ingredients={ingredients} />
           )}
           {steps && steps.length > 0 && (
             <div className="mt-8">

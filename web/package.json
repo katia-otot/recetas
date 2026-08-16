@@ -11,6 +11,7 @@
     "db:generate": "prisma generate",
     "import:csv": "tsx scripts/import-csv.ts",
     "structure:all": "tsx scripts/structure-all.ts",
+    "refine:cfe": "tsx scripts/refine-all-cfe.ts",
     "test:openrouter": "tsx scripts/test-openrouter.ts"
   },
   "dependencies": {

@@ -1,6 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { cfeIngredientId } from "@/lib/cfe";
+import {
+  readHaveIngredients,
+  writeHaveIngredients,
+} from "@/lib/have-ingredients";
 import {
   formatIngredient,
   ingredientHasMetric,
@@ -8,12 +13,33 @@ import {
   type UnitMode,
 } from "@/lib/recipe-schema";
 
-export function IngredientList({ ingredients }: { ingredients: Ingredient[] }) {
+export function IngredientList({
+  title,
+  ingredients,
+}: {
+  title: string;
+  ingredients: Ingredient[];
+}) {
   const hasAnyMetric = useMemo(
     () => ingredients.some(ingredientHasMetric),
     [ingredients],
   );
   const [mode, setMode] = useState<UnitMode>("original");
+  const [haveIds, setHaveIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setHaveIds(readHaveIngredients(title));
+  }, [title]);
+
+  function toggleHave(ingredientId: string) {
+    setHaveIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(ingredientId)) next.delete(ingredientId);
+      else next.add(ingredientId);
+      writeHaveIngredients(title, next);
+      return next;
+    });
+  }
 
   return (
     <div className="mt-6">
@@ -47,23 +73,47 @@ export function IngredientList({ ingredients }: { ingredients: Ingredient[] }) {
         )}
       </div>
 
-      <ul className="mt-4 space-y-2.5 text-sm leading-relaxed text-stone-700 sm:text-base">
+      <p className="mt-2 text-xs text-stone-500">
+        Tocá un ingrediente para marcar que ya lo tenés.
+      </p>
+
+      <ul className="mt-4 space-y-2 text-sm leading-relaxed text-stone-700 sm:text-base">
         {ingredients.map((item, index) => {
+          const id = cfeIngredientId(item.name, index);
           const label = formatIngredient(item, mode);
           const estimated =
             mode === "metric" && item.metricEstimated && ingredientHasMetric(item);
+          const checked = haveIds.has(id);
+
           return (
-            <li
-              key={`${item.name}-${index}`}
-              className="flex gap-3 border-b border-stone-100 pb-2.5 last:border-0 last:pb-0"
-            >
-              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-600" />
-              <span>
-                {label}
-                {estimated ? (
-                  <span className="ml-1 text-xs text-stone-400">(aprox.)</span>
-                ) : null}
-              </span>
+            <li key={`${item.name}-${index}`}>
+              <button
+                type="button"
+                onClick={() => toggleHave(id)}
+                aria-pressed={checked}
+                title={
+                  checked
+                    ? "Marcado: ya lo tenés (tocá para quitar)"
+                    : "Tocá para marcar que ya lo tenés"
+                }
+                className={`flex w-full min-h-11 items-start gap-3 rounded-xl border px-3 py-2.5 text-left touch-manipulation transition-colors ${
+                  checked
+                    ? "border-green-500 bg-green-200 text-stone-900"
+                    : "border-stone-200 bg-white hover:bg-stone-50"
+                }`}
+              >
+                <span
+                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                    checked ? "bg-green-700" : "bg-amber-600"
+                  }`}
+                />
+                <span>
+                  {label}
+                  {estimated ? (
+                    <span className="ml-1 text-xs text-stone-500">(aprox.)</span>
+                  ) : null}
+                </span>
+              </button>
             </li>
           );
         })}
