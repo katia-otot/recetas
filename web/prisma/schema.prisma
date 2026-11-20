@@ -7,13 +7,111 @@ datasource db {
   provider = "sqlite"
 }
 
-// Preparado para uso colaborativo futuro (auth más adelante)
 model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  accounts      Account[]
+  sessions      Session[]
+  recipes       Recipe[]
+  ownedLists    RecipeList[]
+  listMembers   RecipeListMember[]
+  createdInvites RecipeListInvite[] @relation("InviteCreator")
+}
+
+model RecipeList {
   id        String   @id @default(cuid())
-  email     String?  @unique
-  name      String?
+  name      String
+  isDefault Boolean  @default(false)
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
-  recipes   Recipe[]
+  updatedAt DateTime @updatedAt
+  members   RecipeListMember[]
+  recipes   RecipeListItem[]
+  invites   RecipeListInvite[]
+
+  @@index([ownerId])
+}
+
+model RecipeListMember {
+  id        String     @id @default(cuid())
+  listId    String
+  userId    String
+  canEdit   Boolean    @default(false)
+  createdAt DateTime   @default(now())
+  list      RecipeList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([listId, userId])
+  @@index([userId])
+}
+
+model RecipeListItem {
+  id       String     @id @default(cuid())
+  listId   String
+  recipeId String
+  addedAt  DateTime   @default(now())
+  list     RecipeList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  recipe   Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@unique([listId, recipeId])
+  @@index([recipeId])
+}
+
+model RecipeListInvite {
+  id           String     @id @default(cuid())
+  listId       String
+  token        String     @unique
+  email        String?
+  canEdit      Boolean    @default(false)
+  createdById  String
+  expiresAt    DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime   @default(now())
+  list         RecipeList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  createdBy    User       @relation("InviteCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([listId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
 }
 
 model Recipe {
@@ -37,6 +135,7 @@ model Recipe {
   createdById     String?
   createdBy       User?    @relation(fields: [createdById], references: [id])
   sources         RecipeSource[]
+  lists           RecipeListItem[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

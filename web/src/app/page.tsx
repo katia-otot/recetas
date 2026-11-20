@@ -1,19 +1,60 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
+import { LibraryClient } from "@/components/keep/LibraryClient";
+import { signOutToLogin } from "@/lib/auth-actions";
 import { prisma } from "@/lib/db";
-import { SiteHeader } from "@/components/SiteHeader";
+import { claimOrphanRecipes, getUserListAccess } from "@/lib/lists";
+import { requireUser } from "@/lib/session-user";
 
 type HomeProps = {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; lista?: string }>;
 };
 
+function parseStringArray(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed)
+      ? parsed.filter((v): v is string => typeof v === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export default async function Home({ searchParams }: HomeProps) {
-  const { q } = await searchParams;
+  const user = await requireUser();
+  if (!user) redirect("/login");
+
+  const session = await auth();
+  const { q, lista: listaParam } = await searchParams;
   const query = q?.trim() ?? "";
 
-  const [recipes, pendingCount] = await Promise.all([
+  await claimOrphanRecipes(user.id);
+  const access = await getUserListAccess(user.id);
+  const accessibleListIds = [...access.keys()];
+
+  const lists = await prisma.recipeList.findMany({
+    where: { id: { in: accessibleListIds } },
+    orderBy: [{ isDefault: "desc" }, { name: "asc" }],
+    include: { _count: { select: { recipes: true } } },
+  });
+
+  const personal = lists.find((l) => l.isDefault) ?? lists[0];
+  if (!personal) {
+    redirect("/login");
+  }
+
+  const activeListId =
+    listaParam && access.has(listaParam) ? listaParam : personal.id;
+  const activeAccess = access.get(activeListId)!;
+  const activeList = lists.find((l) => l.id === activeListId)!;
+
+  const [recipeRows, shareData] = await Promise.all([
     prisma.recipe.findMany({
       where: {
         status: "estructurado",
+        lists: { some: { listId: activeListId } },
         ...(query
           ? {
               OR: [
@@ -28,100 +69,98 @@ export default async function Home({ searchParams }: HomeProps) {
           : {}),
       },
       orderBy: [{ title: "asc" }],
-      include: { sources: { where: { isPrimary: true }, take: 1 } },
-    }).then((rows) =>
-      rows.filter((recipe) => {
-        if (!recipe.ingredientsJson || !recipe.stepsJson) return false;
-        try {
-          const ingredients = JSON.parse(recipe.ingredientsJson);
-          const steps = JSON.parse(recipe.stepsJson);
-          return Array.isArray(ingredients) && ingredients.length > 0 && Array.isArray(steps) && steps.length > 0;
-        } catch {
-          return false;
-        }
-      }),
-    ),
-    prisma.recipe.count({
-      where: { status: { in: ["importado", "procesando", "error_ia"] } },
+      include: {
+        lists: { select: { listId: true } },
+      },
     }),
+    activeAccess.isOwner
+      ? prisma.recipeList.findUnique({
+          where: { id: activeListId },
+          include: {
+            members: {
+              include: {
+                user: {
+                  select: { id: true, name: true, email: true, image: true },
+                },
+              },
+              orderBy: { createdAt: "asc" },
+            },
+            invites: {
+              where: { revokedAt: null },
+              orderBy: { createdAt: "desc" },
+            },
+          },
+        })
+      : Promise.resolve(null),
   ]);
 
+  const recipes = recipeRows
+    .filter((recipe) => {
+      if (!recipe.ingredientsJson || !recipe.stepsJson) return false;
+      try {
+        const ingredients = JSON.parse(recipe.ingredientsJson);
+        const steps = JSON.parse(recipe.stepsJson);
+        return (
+          Array.isArray(ingredients) &&
+          ingredients.length > 0 &&
+          Array.isArray(steps) &&
+          steps.length > 0
+        );
+      } catch {
+        return false;
+      }
+    })
+    .map((recipe) => {
+      const tags = parseStringArray(recipe.tagsJson);
+      const cuisines = parseStringArray(recipe.cuisineJson);
+      const seen = new Set<string>();
+      const hashtags: string[] = [];
+      for (const value of [...cuisines, ...tags]) {
+        const tag = value.trim().replace(/^#+/, "").toLowerCase();
+        if (!tag || seen.has(tag)) continue;
+        seen.add(tag);
+        hashtags.push(tag);
+      }
+      return {
+        id: recipe.id,
+        slug: recipe.slug,
+        title: recipe.title,
+        preview: recipe.rawText,
+        listIds: recipe.lists.map((item) => item.listId),
+        hashtags,
+      };
+    });
+
   return (
-    <>
-      <SiteHeader />
-      <main className="mx-auto w-full max-w-5xl min-w-0 flex-1 overflow-x-hidden px-4 py-6 pb-10 sm:py-8">
-        <div className="mb-6 sm:mb-8">
-          <h1 className="text-xl font-semibold text-stone-900 sm:text-2xl">
-            Tu biblioteca
-          </h1>
-          <p className="mt-1 text-sm text-stone-600 sm:text-base">
-            {recipes.length} receta{recipes.length === 1 ? "" : "s"} listas
-            {query ? ` · “${query}”` : ""}
-          </p>
-          {pendingCount > 0 && (
-            <p className="mt-2 text-sm text-amber-800">
-              {pendingCount} sin estructurar todavía.
-            </p>
-          )}
-        </div>
-
-        <form className="mb-6 sm:mb-8" action="/" method="get">
-          <label className="block text-sm font-medium text-stone-700" htmlFor="q">
-            Buscar por título, ingredientes, etiquetas o cocina
-          </label>
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-            <input
-              id="q"
-              name="q"
-              type="search"
-              enterKeyHint="search"
-              defaultValue={query}
-              placeholder="ej. italiana, garbanzos, tofu, pasta…"
-              className="min-h-11 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-stone-900 shadow-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
-            />
-            <button
-              type="submit"
-              className="min-h-11 shrink-0 rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-amber-700 sm:w-auto"
-            >
-              Buscar
-            </button>
-          </div>
-        </form>
-
-        {recipes.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6 text-center sm:p-8">
-            <p className="text-stone-700">
-              Todavía no hay recetas estructuradas para mostrar.
-            </p>
-            <Link
-              href="/importar-link"
-              className="mt-4 inline-flex min-h-11 items-center text-amber-700 hover:underline"
-            >
-              Importar desde un link
-            </Link>
-          </div>
-        ) : (
-          <ul className="overflow-hidden rounded-2xl border border-stone-200 bg-white divide-y divide-stone-200">
-            {recipes.map((recipe) => (
-              <li key={recipe.id}>
-                <Link
-                  href={`/recetas/${recipe.slug}`}
-                  className="block px-4 py-4 active:bg-stone-100 sm:hover:bg-stone-50"
-                >
-                  <h2 className="text-base font-medium leading-snug text-stone-900">
-                    {recipe.title}
-                  </h2>
-                  {recipe.rawText && (
-                    <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-stone-600">
-                      {recipe.rawText}
-                    </p>
-                  )}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </main>
-    </>
+    <LibraryClient
+      lists={lists.map((list) => {
+        const a = access.get(list.id)!;
+        return {
+          id: list.id,
+          name: list.name,
+          isDefault: list.isDefault,
+          isOwner: a.isOwner,
+          canEdit: a.canEdit,
+          recipeCount: list._count.recipes,
+        };
+      })}
+      activeListId={activeListId}
+      activeListName={activeList.name}
+      query={query}
+      recipes={recipes}
+      userImage={session?.user?.image}
+      userLabel={session?.user?.name ?? session?.user?.email ?? "?"}
+      signOutAction={signOutToLogin}
+      isOwner={activeAccess.isOwner}
+      members={
+        shareData?.members.map((m) => ({
+          id: m.id,
+          userId: m.userId,
+          canEdit: m.canEdit,
+          user: m.user,
+        })) ?? []
+      }
+      invites={shareData?.invites ?? []}
+    />
   );
 }

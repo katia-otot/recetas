@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { canDeleteRecipe, canEditRecipe, canViewRecipe } from "@/lib/lists";
 import {
   formatIngredient,
   parseStoredIngredients,
   type CfeData,
   type Ingredient,
 } from "@/lib/recipe-schema";
+import { requireUser } from "@/lib/session-user";
 import { uniqueSlug } from "@/lib/slug";
 import { rebuildCfeFromClassic } from "@/lib/structure-recipe";
 import {
@@ -50,10 +52,18 @@ export async function DELETE(
   context: RouteContext,
 ) {
   try {
+    const user = await requireUser();
+    if (!user) {
+      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    }
+
     const { slug } = await context.params;
     const recipe = await prisma.recipe.findUnique({ where: { slug } });
     if (!recipe) {
       return NextResponse.json({ error: "Receta no encontrada" }, { status: 404 });
+    }
+    if (!(await canDeleteRecipe(user.id, recipe.id))) {
+      return NextResponse.json({ error: "Sin permiso para borrar" }, { status: 403 });
     }
 
     await prisma.recipe.delete({ where: { id: recipe.id } });
@@ -68,10 +78,21 @@ export async function DELETE(
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
+    const user = await requireUser();
+    if (!user) {
+      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    }
+
     const { slug } = await context.params;
     const recipe = await prisma.recipe.findUnique({ where: { slug } });
     if (!recipe) {
       return NextResponse.json({ error: "Receta no encontrada" }, { status: 404 });
+    }
+    if (!(await canViewRecipe(user.id, recipe.id))) {
+      return NextResponse.json({ error: "Receta no encontrada" }, { status: 404 });
+    }
+    if (!(await canEditRecipe(user.id, recipe.id))) {
+      return NextResponse.json({ error: "Sin permiso para editar" }, { status: 403 });
     }
 
     const body = await request.json();

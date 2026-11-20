@@ -13,6 +13,10 @@ ENV DATABASE_URL="file:/app/data/recetas.db"
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_OPTIONS=--max-old-space-size=1024
 
+ARG BASE_PATH=/recetas
+ENV BASE_PATH=$BASE_PATH
+ENV NEXT_PUBLIC_BASE_PATH=$BASE_PATH
+
 RUN npm ci && npx prisma generate
 
 COPY . .
@@ -31,6 +35,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL="file:/app/data/recetas.db"
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+ARG BASE_PATH=/recetas
+ENV BASE_PATH=$BASE_PATH
+ENV NEXT_PUBLIC_BASE_PATH=$BASE_PATH
 
 COPY --from=builder /app/package.json /app/package-lock.json ./
 COPY --from=builder /app/node_modules ./node_modules

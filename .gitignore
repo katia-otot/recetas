@@ -19,7 +19,13 @@ web/.agents/
 web/.claude/
 web/.windsurf/
 
-# local logs
+# sqlite (canonical path: data/recetas.db at repo root)
+data/recetas.db
+*.db
+
+# generated logs
+data/logs/
+web/data/logs/
 web/data/structure-log*.txt
 
 # misc
@@ -27,3 +33,6 @@ web/data/structure-log*.txt
 *.pem
 *.tsbuildinfo
 next-env.d.ts
+
+# deploy helper with VPS credentials (local only)
+scripts/deploy-vps-update.py

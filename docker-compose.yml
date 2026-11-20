@@ -2,19 +2,23 @@ services:
   recetas:
     build:
       context: ./web
+      args:
+        BASE_PATH: /recetas
     image: recetas:latest
     container_name: recetas
     restart: unless-stopped
     ports:
-      # The cloud firewall only allows 80/443/5926 from the internet.
-      # 80 is pixelweb; 443 is the only free public HTTP(S) port.
-      - "443:3000"
+      # Solo localhost: nginx en el VPS expone https://katiagadea.com.ar/recetas
+      # No publicar 80/443 (pixelweb / portfolio / otras apps).
+      - "127.0.0.1:3043:3000"
     env_file:
       - .env
     environment:
       NODE_ENV: production
       DATABASE_URL: file:/app/data/recetas.db
       PORT: "3000"
+      BASE_PATH: /recetas
+      NEXT_PUBLIC_BASE_PATH: /recetas
     volumes:
       - ./data/recetas.db:/app/data/recetas.db
     mem_limit: 768m

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { ensurePersonalList } from "@/lib/lists";
 import { uniqueSlug } from "@/lib/slug";
 import { fetchRecipeSourceText } from "@/lib/source-content";
 import { structureRecipeWithAi } from "@/lib/structure-recipe";
@@ -14,7 +15,10 @@ export type LinkImportResult = {
  * Importa una receta desde URL: descarga texto → guarda → estructura con IA.
  * Solo queda lista en la biblioteca si la estructuración termina bien.
  */
-export async function importRecipeFromUrl(url: string): Promise<LinkImportResult> {
+export async function importRecipeFromUrl(
+  url: string,
+  options?: { userId?: string; listId?: string },
+): Promise<LinkImportResult> {
   const normalized = url.trim();
   if (!/^https?:\/\//i.test(normalized)) {
     throw new Error("El link debe empezar con http:// o https://");
@@ -32,6 +36,7 @@ export async function importRecipeFromUrl(url: string): Promise<LinkImportResult
   }
 
   const titleGuess =
+    sourceText.match(/^Título:\s*(.+)$/m)?.[1] ??
     sourceText.match(/"name"\s*:\s*"([^"]+)"/)?.[1] ??
     new URL(normalized).pathname.split("/").filter(Boolean).at(-1)?.replace(/-/g, " ") ??
     "Receta desde link";
@@ -48,11 +53,20 @@ export async function importRecipeFromUrl(url: string): Promise<LinkImportResult
       slug,
       rawText: sourceText.slice(0, 20_000),
       status: "importado",
+      createdById: options?.userId,
       sources: {
         create: [{ url: normalized, isPrimary: true }],
       },
     },
   });
+
+  if (options?.userId) {
+    const targetListId =
+      options.listId ?? (await ensurePersonalList(options.userId)).id;
+    await prisma.recipeListItem.create({
+      data: { listId: targetListId, recipeId: recipe.id },
+    });
+  }
 
   try {
     await structureRecipeWithAi(recipe.id);

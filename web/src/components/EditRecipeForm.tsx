@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { SiteHeader } from "@/components/SiteHeader";
+import { withBasePath } from "@/lib/base-path";
 
 type EditMode = "classic" | "cfe";
 
@@ -72,14 +72,14 @@ export function EditRecipeForm(props: EditRecipeFormProps) {
               cfeFinalText,
             };
 
-      const res = await fetch(`/api/recetas/${props.slug}`, {
+      const res = await fetch(withBasePath(`/api/recetas/${props.slug}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "No se pudo guardar");
-      router.push(`/recetas/${data.slug}`);
+      router.push(`/${data.slug}`);
       router.refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -88,11 +88,9 @@ export function EditRecipeForm(props: EditRecipeFormProps) {
   }
 
   return (
-    <>
-      <SiteHeader />
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6 pb-10 sm:py-8">
+    <div className="mx-auto w-full max-w-2xl min-w-0">
         <Link
-          href={`/recetas/${props.slug}`}
+          href={`/${props.slug}`}
           className="inline-flex min-h-11 items-center text-sm text-stone-500 hover:text-stone-800"
         >
           ← Volver a la receta
@@ -322,14 +320,13 @@ export function EditRecipeForm(props: EditRecipeFormProps) {
                 : "Guardar cambios"}
             </button>
             <Link
-              href={`/recetas/${props.slug}`}
+              href={`/${props.slug}`}
               className="inline-flex min-h-11 items-center justify-center rounded-xl border border-stone-300 bg-white px-4 text-sm text-stone-700 hover:bg-stone-50 sm:w-auto"
             >
               Cancelar
             </Link>
           </div>
         </form>
-      </main>
-    </>
+    </div>
   );
 }

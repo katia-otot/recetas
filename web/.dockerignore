@@ -4,7 +4,6 @@ out
 .env
 .env.*
 !.env.example
-dev.db
 data/structure-log*.txt
 .git
 *.md

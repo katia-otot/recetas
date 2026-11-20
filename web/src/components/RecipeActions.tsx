@@ -2,25 +2,36 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { withBasePath } from "@/lib/base-path";
+
+function useIsClient() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+}
 
 export function RecipeActions({
   slug,
   title,
+  canEdit = true,
+  canDelete = true,
+  variant = "body",
 }: {
   slug: string;
   title: string;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  variant?: "body" | "header";
 }) {
   const router = useRouter();
+  const isClient = useIsClient();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     if (!confirmOpen) return;
@@ -35,7 +46,9 @@ export function RecipeActions({
     setDeleting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/recetas/${slug}`, { method: "DELETE" });
+      const res = await fetch(withBasePath(`/api/recetas/${slug}`), {
+        method: "DELETE",
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "No se pudo borrar");
       router.push("/");
@@ -48,7 +61,7 @@ export function RecipeActions({
   }
 
   const dialog =
-    confirmOpen && mounted
+    confirmOpen && isClient
       ? createPortal(
           <div
             className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-900/50 p-4"
@@ -74,6 +87,11 @@ export function RecipeActions({
                 <span className="font-medium text-stone-800">{title}</span>.
                 Esta acción no se puede deshacer.
               </p>
+              {error && (
+                <p className="mt-2 text-sm text-red-700" role="alert">
+                  {error}
+                </p>
+              )}
               <div className="mt-5 grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -98,23 +116,61 @@ export function RecipeActions({
         )
       : null;
 
+  if (!canEdit && !canDelete) return null;
+
+  if (variant === "header") {
+    return (
+      <>
+        <div className="flex items-center gap-1">
+          {canEdit && (
+            <Link
+              href={`/${slug}/editar`}
+              className="inline-flex h-11 items-center rounded-full px-2.5 text-sm text-stone-700 hover:bg-stone-200/70 sm:px-3"
+            >
+              Editar
+            </Link>
+          )}
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              disabled={deleting}
+              className="inline-flex h-11 items-center rounded-full px-2.5 text-sm text-red-700 hover:bg-red-50 sm:px-3 disabled:opacity-50"
+            >
+              Borrar
+            </button>
+          )}
+        </div>
+        {dialog}
+      </>
+    );
+  }
+
   return (
     <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:w-auto">
-        <Link
-          href={`/recetas/${slug}/editar`}
-          className="inline-flex min-h-11 items-center justify-center rounded-xl border border-stone-300 bg-white px-4 text-sm text-stone-700 hover:bg-stone-50"
-        >
-          Editar
-        </Link>
-        <button
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-          disabled={deleting}
-          className="inline-flex min-h-11 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-4 text-sm text-red-700 hover:bg-red-100 disabled:opacity-50"
-        >
-          Borrar
-        </button>
+      <div
+        className={`grid gap-2 sm:flex sm:w-auto ${
+          canEdit && canDelete ? "grid-cols-2" : "grid-cols-1"
+        }`}
+      >
+        {canEdit && (
+          <Link
+            href={`/${slug}/editar`}
+            className="inline-flex min-h-11 items-center justify-center rounded-xl border border-stone-300 bg-white px-4 text-sm text-stone-700 hover:bg-stone-50"
+          >
+            Editar
+          </Link>
+        )}
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            disabled={deleting}
+            className="inline-flex min-h-11 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-4 text-sm text-red-700 hover:bg-red-100 disabled:opacity-50"
+          >
+            Borrar
+          </button>
+        )}
       </div>
       {error && <p className="text-sm text-red-700">{error}</p>}
       {dialog}

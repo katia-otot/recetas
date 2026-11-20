@@ -1,0 +1,12 @@
+---
+description: Registro de problemas resueltos de este proyecto
+alwaysApply: true
+---
+
+# Problemas resueltos
+
+Antes de depurar o si te trabás, consultá `.cursor/problemas-resueltos.md` (buscar por síntoma o palabra clave).
+
+Si hay un caso similar, aplicá la **Solución** documentada antes de inventar otra.
+
+Si resolvés un incidente nuevo y reusable, agregá una entrada arriba de todo en ese archivo (formato en la user rule correspondiente).

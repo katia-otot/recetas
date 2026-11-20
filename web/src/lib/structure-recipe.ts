@@ -2,8 +2,11 @@ import { prisma } from "./db";
 import {
   assembleCfe,
   buildCfeIngredients,
+  cfeNeedsAiRepair,
+  diagnoseCfeIssues,
   isUsableCfe,
   normalizeAndValidateCfe,
+  type CfeIssue,
 } from "./cfe";
 import { chatCompletion, type ChatMessage } from "./openrouter";
 import {
@@ -26,6 +29,8 @@ Reglas generales:
 - TODO el contenido generado debe estar en español (traducí si la fuente está en inglés).
 - NO inventes ingredientes ni pasos que no estén en la fuente de la receta.
 - Si hay "Contenido de la receta" extraído de un link, ESA es la receta principal (ingredientes + pasos + CFE). Las notas del usuario no reemplazan al link.
+- Si el contenido trae "Texto visible" y "Datos estructurados (JSON-LD)", usá las DOS: completate entre ellas y verificá. Si el JSON tiene menos ingredientes o pasos que el HTML, priorizá el HTML. El JSON puede aportar porciones, tiempos o nombres más limpios.
+- Si ves una lista "Ingredientes" con varios ítems, extraé TODOS. No te quedes con un solo keyword tipo "harina de trigo" si más abajo hay cantidades (500g harina, levadura, etc.).
 - Ingredientes con cantidades cuando consten; si no hay cantidad, dejá quantity/unit vacíos.
 - Equivalencias métricas: si hay quantity + unit convertible (taza, cucharada, oz, g, ml), SIEMPRE llená grams o ml.
   - sólidos/densos → "grams" (ej. "115")
@@ -43,32 +48,44 @@ NOTAS PERSONALES Y VERSIONES (muy importante):
 - NUNCA inventes historial ("2021 primera versión", "se mejoró la mezcla", etc.).
 - versions solo si el usuario escribió pruebas distintas con fecha/etiqueta real ("2024:", "12/2/24", "probé con…"). Cada version: label + changes (lista corta de diferencias concretas). No dupliques la receta entera.
 
-CFE / Cooking for Engineers = grafo de dependencias, no una lista plana:
+CFE / Cooking for Engineers = grafo de STREAMS en paralelo + joins, no una lista plana:
+  - Pensá en STREAMS: cada olla/sartén/bowl es un stream. Dentro del stream los pasos van en cadena (dependsOn).
+    Entre streams sin dependencia → misma columna (paralelo). El join une streams y VA AL FINAL de esas ramas.
   - prepRows: SOLO notas de equipo/horno SIN tocar ingredientes (ej. "Precalentar el horno a 180°C").
     NUNCA pongas en prepRows mezclar, añadir, verter, hornear, cortar, saltear, etc. Eso va en actions.
-  - Todo lo que hace algo CON ingredientes = actions (columnas de la tabla), incluido cortar/salar/secar/mezclar.
-  - Micro-pasos NO son columnas: "dar la vuelta" se fusiona con el hornear/saltear anterior ("Hornear vuelta y vuelta · X min").
-  - Ordená mentalmente los ingredientIds: ingredientes que se usan juntos deben poder agruparse en filas contiguas.
-  - Cada action es un nodo. dependsOn = índices 1-based de acciones que DEBEN terminar antes (solo índices válidos menores al actual).
-  - Las columnas las calcula el sistema: misma columna = en paralelo; más a la derecha = después.
-  - Si un paso va DESPUÉS de otro (aunque sea la misma sartén), son DOS actions, no una sola.
-    Ejemplo arroz: "saltear ajo 1 min" y LUEGO "saltear espárragos 5-7 min"
-      → action1 Saltear ajo (aceite+ajo, duration:"1 min")
-      → action2 Saltear espárragos (aceite+ajo+esparragos, duration:"5-7 min", dependsOn:[1])
-    NUNCA juntes ajo y espárragos en un solo "Saltear" si la receta los secuencia.
-  - duration: tiempo si consta ("1 min", "5-7 min", "20 min", "al dente"). Si no hay tiempo, omitilo.
-  - verb: técnica corta (Hervir, Saltear, Hornear, Cubrir…). El tiempo va en duration, no en el verb.
-  - Al unir resultados previos, ingredientIds incluye todas las filas que abarca.
-  - Si "después, en la misma sartén, tostar piñones" (sin overlap de ingredientes), igual poné dependsOn.
-  - NUNCA pongas Mezclar/Incorporar de TODOS los ingredientes mientras otro grupo todavía se está salteando, asando o hirviendo.
-    El merge final depende de TODOS los streams (asar verduras Y el guiso). Listá primero cada cocción, el join al final.
-  - "Mezclar con aceite para cubrir" ANTES de hornear es un paso de ese grupo, no el merge final.
-  - Ejemplo mental "Pasta caprese" (paralelo + merge):
+  - Todo lo que hace algo CON ingredientes = actions, incluido cortar/salar/secar/mezclar/pincelar.
+  - Micro-pasos NO son columnas: "dar la vuelta" se fusiona con el hornear/saltear anterior ("Hornear vuelta y vuelta").
+  - Orden mental de filas: ingredientes del mismo stream deben poder quedar CONTIGUOS (crema+azúcar+mascarpone juntas;
+    café+ron+vainillas juntas). No intercales streams.
+  - Condimentos compartidos (sal/aceite/pimienta) en DOS streams: asignalos al stream de la PRIMERA cocción;
+    no los repitas en el otro stream salvo el join final.
+  - Cada action es un nodo. dependsOn = índices 1-based de acciones que DEBEN terminar antes (solo < índice actual).
+  - Las columnas las calcula el sistema: misma columna = paralelo; más a la derecha = después.
+  - SECUENCIA en la misma sartén = DOS o más actions, NUNCA un solo Saltear gigante.
+    Ejemplo arroz: "saltear ajo 1 min" y LUEGO "saltear espárragos 5-7 min" y LUEGO "tostar piñones"
+      → Saltear(aceite+ajo, "1 min")
+      → Saltear(aceite+ajo+esparragos, "5-7 min", dependsOn:[1])
+      → Tostar(pinones, dependsOn:[2])  // o al final del stream
+    NUNCA juntes ajo+espárragos+piñones en un solo "Saltear" si la receta los secuencia.
+  - COAT antes de COCINAR el mismo grupo: "Mezclar brócoli+aceite+sal" → LUEGO "Asar/Hornear" (dependsOn).
+    NUNCA pongas Asar/Hornear antes de mezclar/pincelar ese mismo grupo.
+  - duration: tiempo si consta en la receta ("1 min", "5-7 min", "20 min", "al dente"). Si no hay, omitilo.
+  - verb: 1-3 palabras de técnica (Hervir, Saltear, Hornear, Cubrir, Mezclar…). NUNCA prosa ni "y servir".
+  - Al unir resultados previos, ingredientIds incluye TODAS las filas que abarca ese join.
+  - Join final delgado PROHIBIDO: si al final mezclás/armás el plato, ingredientIds debe cubrir casi todos los
+    ingredientes cocidos/prep (no solo el limón o el perejil).
+  - NUNCA un Mezclar/Incorporar de TODOS mientras otro stream todavía se saltea/asa/hierve.
+    Listá primero cada cocción; el join al final con dependsOn a esas cocciones.
+  - "Mezclar con aceite para cubrir" ANTES de hornear = coat de ese grupo, NO el merge final.
+  - Ejemplo "Pasta caprese" (paralelo + merge):
       Hervir(pasta) ∥ Saltear(aceite+tomates+sal) → Mezclar(esos 4) → Incorporar(todos)
   - Ejemplo feijoada: Asar verduras ∥ Sofreír cebolla→ajo→especias→guiso 20 min → al FINAL mezclar asado+guiso.
-  - Ejemplo "Berenjenas/Zapallo a la pizza" (base al horno + topping):
-      → Cortar y salar(berenjenas+sal) → Secar(berenjenas) → Pincelar(berenjenas+aceite) → Hornear vuelta y vuelta(berenjenas) → Cubrir(+salsa+queso+orégano) → Hornear/gratinar
-      Las filas de berenjenas y aceite juntas; salsa/queso/orégano juntas. NO separes "dar la vuelta" como columna.
+  - Ejemplo tiramisú (2 streams):
+      Batir(crema+azúcar) → Mezclar(+mascarpone)  ∥  Mezclar(café+ron) → Remojar(+vainillas)  → Armar(todos) → Espolvorear(cacao)
+  - Ejemplo "Berenjenas a la pizza":
+      Cortar/salar → Secar → Pincelar(+aceite) → Hornear vuelta y vuelta → Cubrir(+salsa+queso) → Gratinar
+  - Checklist antes de responder: (1) ¿cada secuencia de sartén está partida? (2) ¿coat antes de cook?
+    (3) ¿joins al final con ids completos? (4) ¿dependsOn coherente? (5) ¿verbs cortos? (6) ¿todos los ids cubiertos?
   - cfe.ingredients: UNA fila por cada item de "ingredients", mismo orden; label con nombre completo.
   - id en snake_case. column número (se recalcula). NUNCA column="mix".
   - NO uses "combinar" si hay calor/sartén → "saltear" o "cocinar".
@@ -161,14 +178,17 @@ async function completeStructuredRecipe(
       );
       const hasClassic =
         structured.ingredients.length > 0 && structured.steps.length > 0;
-      if (!hasClassic && attempt === 0) {
+      const incompleteList =
+        structured.ingredients.length === 1 && structured.steps.length > 0;
+      if ((!hasClassic || incompleteList) && attempt === 0) {
         conversation = [
           ...conversation,
           { role: "assistant", content: completion.content },
           {
             role: "user",
-            content:
-              "Faltan ingredients y/o steps. Usá el contenido del LINK (o el texto de la receta) y devolvé TODO el JSON completo, con ingredientes, pasos y cfe. Solo JSON.",
+            content: incompleteList
+              ? "La lista de ingredientes está incompleta (un solo ítem). Extraé TODOS los ingredientes con cantidad de la sección Ingredientes del contenido, y devolvé el JSON completo. Solo JSON."
+              : "Faltan ingredients y/o steps. Usá el contenido del LINK (o el texto de la receta) y devolvé TODO el JSON completo, con ingredientes, pasos y cfe. Solo JSON.",
           },
         ];
         continue;
@@ -243,31 +263,43 @@ export function sanitizeVersions(
   );
 }
 
-async function completeCfeActions(input: {
-  title: string;
-  ingredients: CfeData["ingredients"];
-  steps: string[];
-}): Promise<CfeData | null> {
-  if (input.ingredients.length === 0 || input.steps.length === 0) return null;
-
-  const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content: `Armás SOLO las acciones CFE (grafo) en español.
+const CFE_ACTIONS_SYSTEM = `Armás SOLO las acciones CFE (grafo de streams) en español.
 Los ingredientes (id + label) son FIJOS: no los cambies ni inventes otros.
 Devolvé JSON: { "prepRows": string[], "actions": [{ "column": number, "verb": string, "ingredientIds": string[], "duration": "5-7 min", "dependsOn": [1] }], "finalAction": { "verb": string, "tempC": null, "tempF": null, "duration": "", "notes": "" } }
 
 Reglas clave:
-- prepRows: SOLO "Precalentar el horno…" u otras notas de equipo SIN ingredientes. Mezclar/añadir/verter/hornear/cortar → actions.
-- Prep de ingredientes va en actions como columnas.
-- Comprimí micro-pasos ("dar la vuelta" → fusionar con hornear anterior).
-- Grafo: paso DESPUÉS de otro = dos actions + dependsOn válido (solo índices anteriores).
-- Paralelo solo sin dependencia (pasta caprese: hervir ∥ saltear).
-- Horno vuelta y vuelta = UNA action "Hornear vuelta y vuelta · X min".
-- Pizza sobre berenjena: cortar+salar → secar → pincelar → hornear base → cubrir → gratinar.
-- ingredientIds: solo los que participan en esa acción. Agrupá mentalmente filas que van juntas.
-- duration si consta. todos los ids en alguna action; sin vacías.`,
-    },
+- Streams: cada olla/sartén/bowl es un stream en cadena; streams independientes van en paralelo.
+- prepRows: SOLO "Precalentar el horno…" u otras notas de equipo SIN ingredientes.
+- Prep/coat de ingredientes va en actions (cortar, mezclar aceite, pincelar…).
+- COAT antes de COOK del mismo grupo (Mezclar brócoli+aceite → Asar). Nunca al revés.
+- Secuencia en sartén = varias actions + dependsOn. NUNCA un Saltear con 4+ ingredientes si la receta los agrega de a uno.
+- Micro-pasos ("dar la vuelta") → fusionar con hornear/saltear anterior.
+- Join final: ingredientIds cubre casi TODO lo cocido/prep (prohibido join solo con limón/perejil).
+- Condimento en dos streams → asignarlo al primero; no duplicar filas mentalmente.
+- verb corto (1-3 palabras: "Saltear", "Hornear", "Triturar"). NUNCA frases largas.
+- Al incorporar un stream a otro, ingredientIds = unión de ambos (ej. triturar garbanzos+tahina+especias).
+- duration si consta. TODOS los ids de INGREDIENTES_FIJOS deben aparecer en alguna action.
+- Checklist: secuencias partidas, coat→cook, joins completos al final, dependsOn, verbs cortos, cobertura total.`;
+
+function formatIssuesForRepair(issues: CfeIssue[]): string {
+  return issues.map((issue) => `- [${issue.code}] ${issue.detail}`).join("\n");
+}
+
+async function completeCfeActions(input: {
+  title: string;
+  ingredients: CfeData["ingredients"];
+  steps: string[];
+  feedback?: CfeIssue[];
+}): Promise<CfeData | null> {
+  if (input.ingredients.length === 0 || input.steps.length === 0) return null;
+
+  const feedbackBlock =
+    input.feedback && input.feedback.length > 0
+      ? `\n\nCORRECCIONES OBLIGATORIAS (el intento anterior falló el diagnóstico):\n${formatIssuesForRepair(input.feedback)}\nRehacé el grafo entero arreglando esos puntos. No inventes ingredientes.`
+      : "";
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: CFE_ACTIONS_SYSTEM },
     {
       role: "user",
       content: `Receta: ${input.title}
@@ -276,14 +308,14 @@ INGREDIENTES_FIJOS:
 ${JSON.stringify(input.ingredients, null, 2)}
 
 PASOS:
-${input.steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}`,
+${input.steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}${feedbackBlock}`,
     },
   ];
 
   try {
     const completion = await chatCompletion(messages, {
-      temperature: 0.1,
-      maxTokens: 2048,
+      temperature: input.feedback?.length ? 0.15 : 0.1,
+      maxTokens: 4096,
     });
     const parsed = parseJsonContent(completion.content) as {
       prepRows?: unknown;
@@ -291,9 +323,40 @@ ${input.steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}`,
       finalAction?: CfeData["finalAction"];
     };
 
-    return assembleCfe({
+    const assembled = assembleCfe({
       ingredients: input.ingredients,
       actions: parsed.actions ?? [],
+      finalAction: parsed.finalAction,
+      prepRows: Array.isArray(parsed.prepRows)
+        ? parsed.prepRows.map(String)
+        : [],
+    });
+
+    if (assembled) return assembled;
+
+    // Último recurso: reintentar ensamble listando ids que faltaron en la respuesta.
+    const used = new Set(
+      (parsed.actions ?? []).flatMap((action) => action.ingredientIds ?? []),
+    );
+    const missing = input.ingredients
+      .map((ing) => ing.id)
+      .filter((id) => !used.has(id));
+    if (missing.length === 0) return null;
+
+    const patchedActions = [
+      ...(parsed.actions ?? []),
+      {
+        column: 99,
+        verb: missing.length <= 2 ? "Decorar" : "Incorporar",
+        ingredientIds: missing,
+        dependsOn: parsed.actions?.length
+          ? [parsed.actions.length]
+          : undefined,
+      },
+    ];
+    return assembleCfe({
+      ingredients: input.ingredients,
+      actions: patchedActions,
       finalAction: parsed.finalAction,
       prepRows: Array.isArray(parsed.prepRows)
         ? parsed.prepRows.map(String)
@@ -304,19 +367,76 @@ ${input.steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}`,
   }
 }
 
+async function completeCfeActionsWithRepair(input: {
+  title: string;
+  ingredients: CfeData["ingredients"];
+  steps: string[];
+}): Promise<CfeData | null> {
+  let best = await completeCfeActions(input);
+  if (!best || !isUsableCfe(best)) return best;
+
+  let bestIssues = diagnoseCfeIssues(best);
+  if (!cfeNeedsAiRepair(bestIssues)) return best;
+
+  // Hasta 2 reintentos con el feedback del diagnóstico.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const candidate = await completeCfeActions({
+      ...input,
+      feedback: bestIssues.filter((i) => cfeNeedsAiRepair([i])),
+    });
+    if (!candidate || !isUsableCfe(candidate)) continue;
+
+    const candidateIssues = diagnoseCfeIssues(candidate);
+    const bestSerious = bestIssues.filter((i) => cfeNeedsAiRepair([i])).length;
+    const candidateSerious = candidateIssues.filter((i) =>
+      cfeNeedsAiRepair([i]),
+    ).length;
+
+    if (candidateSerious < bestSerious) {
+      best = candidate;
+      bestIssues = candidateIssues;
+    } else if (candidateSerious === bestSerious) {
+      // Preferir el nuevo si al menos no empeoró (puede arreglar non_contiguous).
+      best = candidate;
+      bestIssues = candidateIssues;
+    }
+
+    if (!cfeNeedsAiRepair(bestIssues)) break;
+  }
+
+  return best;
+}
+
 /**
  * Normaliza CFE: labels canónicos desde ingredientes.
- * Si falla, intenta un segundo pase solo de acciones.
+ * Si falla o el diagnóstico semántico es malo, intenta pase(s) solo de acciones.
  * Si sigue mal → null (no se muestra en la UI).
  */
 async function resolveCfe(
   structured: StructuredRecipe,
 ): Promise<CfeData | null> {
-  const first = normalizeAndValidateCfe(structured);
-  if (first && isUsableCfe(first)) return first;
-
   const fixedIngredients = buildCfeIngredients(structured.ingredients);
-  const repaired = await completeCfeActions({
+  const first = normalizeAndValidateCfe(structured);
+
+  if (first && isUsableCfe(first)) {
+    const issues = diagnoseCfeIssues(first);
+    if (!cfeNeedsAiRepair(issues)) return first;
+
+    const repaired = await completeCfeActionsWithRepair({
+      title: structured.title,
+      ingredients: fixedIngredients,
+      steps: structured.steps,
+    });
+    if (repaired && isUsableCfe(repaired)) {
+      const repairedIssues = diagnoseCfeIssues(repaired);
+      const before = issues.filter((i) => cfeNeedsAiRepair([i])).length;
+      const after = repairedIssues.filter((i) => cfeNeedsAiRepair([i])).length;
+      if (after <= before) return repaired;
+    }
+    return first;
+  }
+
+  const repaired = await completeCfeActionsWithRepair({
     title: structured.title,
     ingredients: fixedIngredients,
     steps: structured.steps,
@@ -335,7 +455,7 @@ export async function rebuildCfeFromClassic(input: {
   if (input.ingredients.length === 0 || input.steps.length === 0) return null;
 
   const fixedIngredients = buildCfeIngredients(input.ingredients);
-  const rebuilt = await completeCfeActions({
+  const rebuilt = await completeCfeActionsWithRepair({
     title: input.title,
     ingredients: fixedIngredients,
     steps: input.steps,
@@ -512,23 +632,44 @@ export async function structureRecipeIfNeeded(recipeId: string): Promise<void> {
   await structureRecipeWithAi(recipeId);
 }
 
+/** Statuses that still need a first pass (or a retry after IA error). */
+const PENDING_STATUSES = ["importado", "error_ia", "procesando"] as const;
+
+/**
+ * Redo = pendientes + ya estructuradas (rehacer CFE/pasos con el modelo actual).
+ * Omite `incompleta` (links de video / sin texto extraíble).
+ */
+const REDO_STATUSES = [
+  ...PENDING_STATUSES,
+  "estructurado",
+] as const;
+
 export async function structureAllPending(options?: {
   delayMs?: number;
   limit?: number;
-}): Promise<{ ok: number; failed: number; errors: string[] }> {
+  /** Si true, también reestructura las ya marcadas como estructurado. */
+  redo?: boolean;
+}): Promise<{ ok: number; failed: number; skipped: number; errors: string[] }> {
   const delayMs = options?.delayMs ?? 1500;
   const limit = options?.limit ?? 500;
+  const redo = options?.redo ?? false;
+  const statuses = redo ? [...REDO_STATUSES] : [...PENDING_STATUSES];
 
   const pending = await prisma.recipe.findMany({
-    where: { status: { in: ["importado", "error_ia"] } },
+    where: { status: { in: statuses } },
     orderBy: { createdAt: "asc" },
     take: limit,
-    select: { id: true, title: true },
+    select: { id: true, title: true, status: true },
   });
 
   let ok = 0;
   let failed = 0;
+  let skipped = 0;
   const errors: string[] = [];
+
+  console.log(
+    `Batch: ${pending.length} recetas (modo ${redo ? "redo" : "pending"})`,
+  );
 
   for (let i = 0; i < pending.length; i++) {
     const item = pending[i];
@@ -537,10 +678,20 @@ export async function structureAllPending(options?: {
       ok += 1;
       console.log(`[${i + 1}/${pending.length}] OK: ${item.title}`);
     } catch (e) {
-      failed += 1;
-      const msg = `${item.title}: ${(e as Error).message}`;
-      errors.push(msg);
-      console.error(`[${i + 1}/${pending.length}] FAIL: ${msg}`);
+      const message = (e as Error).message;
+      // incompleta / sin fuente: no contar como fallo duro del batch
+      if (
+        message.includes("no es de una receta") ||
+        message.includes("no tiene texto")
+      ) {
+        skipped += 1;
+        console.warn(`[${i + 1}/${pending.length}] SKIP: ${item.title}: ${message}`);
+      } else {
+        failed += 1;
+        const msg = `${item.title}: ${message}`;
+        errors.push(msg);
+        console.error(`[${i + 1}/${pending.length}] FAIL: ${msg}`);
+      }
     }
 
     if (i < pending.length - 1) {
@@ -548,5 +699,5 @@ export async function structureAllPending(options?: {
     }
   }
 
-  return { ok, failed, errors };
+  return { ok, failed, skipped, errors };
 }
