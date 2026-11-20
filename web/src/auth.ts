@@ -3,7 +3,10 @@ import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
+import { getBasePath } from "@/lib/base-path";
 import { INVITE_COOKIE, userHasValidInviteCookie } from "@/lib/lists";
+
+const appBasePath = getBasePath();
 
 function allowedEmails(): string[] {
   return (process.env.AUTH_ALLOWED_EMAILS ?? "")
@@ -12,23 +15,41 @@ function allowedEmails(): string[] {
     .filter(Boolean);
 }
 
+/** Pathname del request a veces incluye basePath (/recetas/...). */
+function pathWithoutBase(path: string): string {
+  if (appBasePath && (path === appBasePath || path.startsWith(`${appBasePath}/`))) {
+    const stripped = path.slice(appBasePath.length);
+    return stripped || "/";
+  }
+  return path;
+}
+
 function isPublicPath(path: string): boolean {
+  const p = pathWithoutBase(path);
   return (
-    path === "/login" ||
-    path.startsWith("/login/") ||
-    path.startsWith("/api/auth") ||
-    path.startsWith("/invitar/") ||
-    path.startsWith("/api/invitar/")
+    p === "/login" ||
+    p.startsWith("/login/") ||
+    p.startsWith("/api/auth") ||
+    p.startsWith("/invitar/") ||
+    p.startsWith("/api/invitar/")
   );
+}
+
+function appPath(path: string): string {
+  return `${appBasePath}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   providers: [Google],
   session: { strategy: "jwt" },
+  // Público real: /recetas/api/auth. El route handler reinyecta /recetas porque
+  // Next lo strippea antes de llegar a Auth.js.
+  basePath: appPath("/api/auth"),
+  // Sin /recetas, Auth.js manda a /login en el dominio raíz (Netlify 404).
   pages: {
-    signIn: "/login",
-    error: "/login",
+    signIn: appPath("/login"),
+    error: appPath("/login"),
   },
   trustHost: true,
   callbacks: {

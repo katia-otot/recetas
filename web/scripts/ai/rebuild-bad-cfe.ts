@@ -80,16 +80,16 @@ async function main() {
 
   for (const recipe of recipes) {
     const raw = JSON.parse(recipe.cfeJson || "null") as CfeData | null;
-    const refined = raw ? refineStoredCfe(raw) ?? raw : null;
-    const issues = refined ? diagnoseCfeIssues(refined) : [];
-    const serious = seriousIssues(issues);
-    const missingCfe = !raw || !refined;
-    if (!force && serious.length === 0 && !missingCfe) continue;
-
     const ingredients = parseStoredIngredients(
       JSON.parse(recipe.ingredientsJson || "[]"),
     );
     const steps = JSON.parse(recipe.stepsJson || "[]") as string[];
+    const refined = raw ? refineStoredCfe(raw, { steps }) ?? raw : null;
+    const issues = refined ? diagnoseCfeIssues(refined, { steps }) : [];
+    const serious = seriousIssues(issues);
+    const missingCfe = !raw || !refined;
+    if (!force && serious.length === 0 && !missingCfe) continue;
+
     if (ingredients.length === 0 || steps.length === 0) {
       console.log(`SKIP (sin clásico): ${recipe.title}`);
       continue;
@@ -138,7 +138,7 @@ async function main() {
         failed += 1;
         console.error(`${label}: FAIL (CFE no usable)`);
       } else {
-        const after = diagnoseCfeIssues(rebuilt);
+        const after = diagnoseCfeIssues(rebuilt, { steps: target.steps });
         const afterSerious = seriousIssues(after);
         const beforeCount = seriousIssues(target.before).length || target.before.length;
         const afterCount = afterSerious.length;

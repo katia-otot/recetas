@@ -61,7 +61,7 @@ export function formatCfeActionLabel(action: {
 const MERGE_VERB =
   /mezclar|incorporar|juntar|unir|combinar|agregar|servir|aliñar/i;
 const COOK_VERB =
-  /saltear|sofre[ií]r|hervir|hornear|asar|cocinar|fre[ií]r|tostar|dorar|rehogar|pochar|blanquear|reducir|gratinar|sellad/i;
+  /saltear|sofre[ií]r|hervir|hornear|\basar\b|cocinar|fre[ií]r|tostar|dorar|rehogar|pochar|blanquear|reducir|gratinar|sellad/i;
 const COAT_VERB =
   /\b(mezclar|pincelar|untar|espolvorear|frotar|ali[ñn]ar)\b/i;
 const PREP_VERB =
@@ -204,6 +204,8 @@ export function reorderIngredientsForActions(
 
   // Insertar cada grupo pegado al cluster ya colocado de esa acción
   // (evita crema|azúcar|café|mascarpone cuando mascarpone va con crema).
+  // Si el overlap es chico (condimento compartido: soja en salsa Y tofu),
+  // abrir bloque nuevo al final para no partir el stream anterior.
   for (const action of laidOut) {
     const ids = action.ingredientIds.filter((id) => known.has(id));
     const neu = ids.filter((id) => !placed.has(id));
@@ -212,8 +214,10 @@ export function reorderIngredientsForActions(
     const placedInAction = ids
       .map((id) => ordered.indexOf(id))
       .filter((index) => index >= 0);
+    const overlapRatio =
+      ids.length > 0 ? placedInAction.length / ids.length : 0;
     const insertAt =
-      placedInAction.length > 0
+      placedInAction.length > 0 && overlapRatio >= 0.5
         ? Math.max(...placedInAction) + 1
         : ordered.length;
 
@@ -274,8 +278,11 @@ function isLargeJoin(
     totalIngredientIds > 0 &&
     action.ingredientIds.length >=
       Math.max(3, Math.ceil(totalIngredientIds * 0.5));
+  // +2 pillaba coats legítimos (tofu+maicena+soja). Pedir expansión real.
   const expandsCook =
-    action.ingredientIds.length >= cook.ingredientIds.length + 2;
+    action.ingredientIds.length >= cook.ingredientIds.length + 3 &&
+    action.ingredientIds.length >=
+      Math.max(4, Math.ceil(totalIngredientIds * 0.35));
   return coversMost || expandsCook;
 }
 
@@ -347,37 +354,94 @@ export function compressSequentialActions(actions: CfeAction[]): CfeAction[] {
   return result;
 }
 
+/** ¿El "mezclar/marinar" parece un coat del cook (no un join de varios streams)? */
+function isCoatForCook(
+  cook: CfeAction,
+  coat: CfeAction,
+  prior: CfeAction[],
+  total: number,
+): boolean {
+  if (!isCookVerb(cook.verb)) return false;
+  const coatLike =
+    isCoatVerb(coat.verb) ||
+    isPrepVerb(coat.verb) ||
+    /mezclar|marinar|rebozar|enharinar|empapar/i.test(coat.verb);
+  if (!coatLike) return false;
+  if (isLargeJoin(coat, cook, total)) return false;
+
+  const cookIds = cook.ingredientIds;
+  const coatIds = coat.ingredientIds;
+  const cookInCoat = cookIds.every((id) => coatIds.includes(id));
+  if (!cookInCoat) return false;
+  // Mismo set, o cook + pocos coatings (tofu+maicena+soja)
+  if (!(sameIdSet(cookIds, coatIds) || coatIds.length <= cookIds.length + 3)) {
+    return false;
+  }
+
+  // Si el coat toca ≥2 cocciones previas distintas, es un join (pasta+tomates).
+  const priorCooks = prior.filter(
+    (action) => isCookVerb(action.verb) && action !== cook,
+  );
+  const streamsHit = priorCooks.filter((action) =>
+    idsOverlap(action.ingredientIds, coatIds),
+  ).length;
+  return streamsHit <= 0;
+}
+
 /**
- * 1) Coat/prep del mismo grupo ANTES de cocinarlo (mezclar aceite → asar).
- * 2) Join grande DESPUÉS de las cocciones que aporta (no mover el coat chico).
+ * 1) Coat/prep del mismo grupo ANTES de cocinarlo
+ *    (mezclar tofu+maicena → dorar; mezclar aceite → asar).
+ * 2) Join grande DESPUÉS de las cocciones que aporta.
+ * Remapea dependsOn para no romper la cadena del wok.
  */
 function orderActionsForGraph(actions: CfeAction[]): CfeAction[] {
-  const result = [...actions];
+  let result = actions.map((action) => ({
+    ...action,
+    ingredientIds: [...action.ingredientIds],
+    dependsOn: action.dependsOn ? [...action.dependsOn] : undefined,
+  }));
   const allIds = new Set(actions.flatMap((a) => a.ingredientIds));
   const total = allIds.size;
   let changed = true;
   let guard = 0;
 
+  const move = (from: number, to: number) => {
+    // Remap deps as if index `from` moves to `to`.
+    const oldToNew = result.map((_, index) => {
+      if (index === from) return to;
+      if (from < to) {
+        if (index > from && index <= to) return index - 1;
+        return index;
+      }
+      if (index >= to && index < from) return index + 1;
+      return index;
+    });
+    result = result.map((action) => {
+      const deps = (action.dependsOn ?? [])
+        .map((dep) => oldToNew[dep - 1] + 1)
+        .filter((dep) => Number.isInteger(dep) && dep >= 1);
+      return {
+        ...action,
+        dependsOn: deps.length > 0 ? [...new Set(deps)] : undefined,
+      };
+    });
+    const [moved] = result.splice(from, 1);
+    result.splice(to, 0, moved);
+    result = sanitizeDependsOn(result);
+  };
+
   while (changed && guard < 50) {
     changed = false;
     guard += 1;
 
-    // Coat/prep ANTES de cook solo si es EXACTAMENTE el mismo grupo
-    // (mezclar brócoli+aceite → asar). No mover joins más amplios
-    // (mezclar pasta+tomates NO va antes del salteado de tomates).
     for (let i = 0; i < result.length; i++) {
       for (let j = i + 1; j < result.length; j++) {
         const earlier = result[i];
         const later = result[j];
-        if (!isCookVerb(earlier.verb)) continue;
-        if (!sameIdSet(earlier.ingredientIds, later.ingredientIds)) continue;
-        const laterIsCoatOrPrep =
-          isCoatVerb(later.verb) ||
-          isPrepVerb(later.verb) ||
-          (isMergeVerb(later.verb) && !isLargeJoin(later, earlier, total));
-        if (!laterIsCoatOrPrep) continue;
-        const [moved] = result.splice(j, 1);
-        result.splice(i, 0, moved);
+        if (!isCoatForCook(earlier, later, result.slice(0, j), total)) {
+          continue;
+        }
+        move(j, i);
         changed = true;
         break;
       }
@@ -385,7 +449,6 @@ function orderActionsForGraph(actions: CfeAction[]): CfeAction[] {
     }
     if (changed) continue;
 
-    // Join grande después del cook cuyas filas cubre.
     for (let i = 0; i < result.length; i++) {
       for (let j = i + 1; j < result.length; j++) {
         const earlier = result[i];
@@ -396,14 +459,75 @@ function orderActionsForGraph(actions: CfeAction[]): CfeAction[] {
           earlier.ingredientIds.includes(id),
         );
         if (!cookIsSubset || later.ingredientIds.length === 0) continue;
-        const [moved] = result.splice(i, 1);
-        result.splice(j, 0, moved);
+        move(i, j);
         changed = true;
         break;
       }
       if (changed) break;
     }
   }
+  return result;
+}
+
+const COATING_ID =
+  /maicena|harina|panko|fecula|f[eé]cula|almid[oó]n|rebozado|pan_rallado/i;
+
+/**
+ * Después de Mezclar(tofu+maicena) → Dorar solo debe abarcar el tofu.
+ * Si no, la tabla muestra "Dorar" encima de maicena (incorrecto).
+ */
+function stripCoatingsFromCooks(actions: CfeAction[]): CfeAction[] {
+  return actions.map((action, index) => {
+    if (!isCookVerb(action.verb)) return action;
+    const coatings = action.ingredientIds.filter((id) => COATING_ID.test(id));
+    if (coatings.length === 0) return action;
+
+    const coatedEarlier = actions.slice(0, index).some((prev) => {
+      if (!(isCoatVerb(prev.verb) || isMergeVerb(prev.verb) || isPrepVerb(prev.verb))) {
+        return false;
+      }
+      if (!idsOverlap(prev.ingredientIds, action.ingredientIds)) return false;
+      return coatings.every((id) => prev.ingredientIds.includes(id));
+    });
+    if (!coatedEarlier) return action;
+
+    const nextIds = action.ingredientIds.filter((id) => !COATING_ID.test(id));
+    if (nextIds.length === 0) return action;
+    return { ...action, ingredientIds: nextIds };
+  });
+}
+
+/**
+ * En una sartén/wok, al "agregar/añadir" se acumula lo que ya estaba.
+ * Cocinar cebolla → Agregar ajo debe abarcar cebolla+ajo (rowspan CFE).
+ * Usa dependsOn (1-based) ya alineados al orden actual.
+ */
+function accumulateSequentialPanIds(actions: CfeAction[]): CfeAction[] {
+  if (actions.length <= 1) return actions;
+  const total = new Set(actions.flatMap((a) => a.ingredientIds)).size;
+  const result = actions.map((action) => ({
+    ...action,
+    ingredientIds: [...action.ingredientIds],
+  }));
+
+  for (let i = 0; i < result.length; i++) {
+    const cur = result[i];
+    if (isLargeJoin(cur, { ...cur, ingredientIds: [] }, total)) continue;
+    if (!/agregar|a[ñn]adir|saltear|sofre[ií]r|rehogar|mezclar/i.test(cur.verb)) {
+      continue;
+    }
+
+    const depIdxs = (cur.dependsOn ?? [])
+      .map((n) => n - 1)
+      .filter((j) => j >= 0 && j < i);
+
+    for (const j of depIdxs) {
+      const prev = result[j];
+      if (isLargeJoin(prev, cur, total)) continue;
+      cur.ingredientIds = unionIds(prev.ingredientIds, cur.ingredientIds);
+    }
+  }
+
   return result;
 }
 
@@ -480,9 +604,22 @@ function inferDependencies(ordered: CfeAction[], index: number): number[] {
 export function layoutActionGraph(actions: CfeAction[]): CfeAction[] {
   if (actions.length === 0) return actions;
 
-  const ordered = orderActionsForGraph(actions);
-  const deps = ordered.map((_, i) => inferDependencies(ordered, i));
+  let ordered = sanitizeDependsOn(orderActionsForGraph(actions));
 
+  // Merge deps inferidas + explícitas (ya remapeadas) para poder acumular el wok.
+  let deps = ordered.map((_, i) => inferDependencies(ordered, i));
+  ordered = ordered.map((action, i) => ({
+    ...action,
+    dependsOn: deps[i].length > 0 ? deps[i].map((j) => j + 1) : undefined,
+  }));
+
+  // Acumular ids del sartén (cebolla → +ajos → +salsa).
+  ordered = accumulateSequentialPanIds(ordered);
+  // Dorar/freír no debe rowspan-ear la maicena del mezclar previo.
+  ordered = stripCoatingsFromCooks(ordered);
+
+  // Recalcular deps/columnas con ids ya acumulados.
+  deps = ordered.map((_, i) => inferDependencies(ordered, i));
   const columns = ordered.map(() => 1);
   for (let i = 0; i < ordered.length; i++) {
     if (deps[i].length === 0) {
@@ -492,9 +629,25 @@ export function layoutActionGraph(actions: CfeAction[]): CfeAction[] {
     columns[i] = 1 + Math.max(...deps[i].map((j) => columns[j]));
   }
 
+  // Cinturón: coat/mezclar nunca a la derecha del cook del mismo grupo.
+  const total = new Set(ordered.flatMap((a) => a.ingredientIds)).size;
+  for (let i = 0; i < ordered.length; i++) {
+    for (let j = 0; j < ordered.length; j++) {
+      if (i === j) continue;
+      if (!isCoatForCook(ordered[j], ordered[i], ordered.slice(0, Math.max(i, j)), total)) {
+        continue;
+      }
+      // ordered[i] es coat, ordered[j] es cook
+      if (columns[i] >= columns[j]) {
+        columns[j] = columns[i] + 1;
+      }
+    }
+  }
+
   return ordered.map((action, i) => ({
     ...action,
     column: columns[i],
+    dependsOn: deps[i].length > 0 ? deps[i].map((j) => j + 1) : undefined,
   }));
 }
 
@@ -536,9 +689,36 @@ function shortenVerboseVerb(verb: string): string {
  * Prep de ingredientes (cortar/mezclar/hornear…) va en la tabla.
  * prepRows = solo cosas como "Precalentar el horno…".
  */
+/**
+ * Si los pasos clásicos no traen tiempos, borra durations inventadas
+ * (típico "5-7 min" / "2-3 min" que alucina el modelo).
+ */
+/** ¿Los pasos clásicos traen tiempos numéricos? (no "hasta que dore"). */
+export function stepsHaveNumericTimes(steps?: string[]): boolean {
+  if (!steps || steps.length === 0) return false;
+  return /\d+\s*(?:-|–)?\s*\d*\s*min\b|\d+\s*horas?\b|\d+\s*seg/i.test(
+    steps.join("\n"),
+  );
+}
+
+export function stripInventedDurations(
+  actions: CfeAction[],
+  steps?: string[],
+): CfeAction[] {
+  if (!steps || steps.length === 0) return actions;
+  // Solo conservar durations si hay minutos/horas/seg en los pasos.
+  // "hasta que dore" no cuenta: el modelo igual inventa "5-7 min".
+  if (stepsHaveNumericTimes(steps)) return actions;
+  return actions.map((action) => ({
+    ...action,
+    duration: undefined,
+  }));
+}
+
 export function refineCfeActions(input: {
   actions: CfeAction[];
   prepRows?: string[];
+  steps?: string[];
 }): {
   actions: CfeAction[];
   prepRows: string[];
@@ -550,6 +730,7 @@ export function refineCfeActions(input: {
       verb: shortenVerboseVerb(action.verb),
     })),
   );
+  actions = stripInventedDurations(actions, input.steps);
   actions = compressSequentialActions(actions);
   actions = layoutActionGraph(actions);
 
@@ -630,7 +811,9 @@ export type CfeIssue = {
     | "collapsed_sequence"
     | "thin_final_join"
     | "verbose_verb"
-    | "bad_prep";
+    | "bad_prep"
+    | "invented_durations"
+    | "cook_with_coating";
   detail: string;
 };
 
@@ -638,9 +821,13 @@ export type CfeIssue = {
  * Diagnóstico semántico de CFE (post-refine).
  * Sirve para decidir si hace falta un segundo pase de IA.
  */
-export function diagnoseCfeIssues(cfe: CfeData): CfeIssue[] {
+export function diagnoseCfeIssues(
+  cfe: CfeData,
+  options?: { steps?: string[] },
+): CfeIssue[] {
   const issues: CfeIssue[] = [];
-  const refined = refineStoredCfe(cfe) ?? cfe;
+  const refined =
+    refineStoredCfe(cfe, { steps: options?.steps }) ?? cfe;
   const actions = layoutActionGraph(refined.actions ?? []);
   const ingredients = reorderIngredientsForActions(
     refined.ingredients ?? [],
@@ -648,6 +835,7 @@ export function diagnoseCfeIssues(cfe: CfeData): CfeIssue[] {
   );
   const idSet = new Set(ingredients.map((i) => i.id));
   const total = idSet.size;
+  const steps = options?.steps ?? [];
 
   if (actions.length === 0) {
     issues.push({ code: "empty_actions", detail: "sin actions" });
@@ -687,13 +875,14 @@ export function diagnoseCfeIssues(cfe: CfeData): CfeIssue[] {
     for (let j = i + 1; j < actions.length; j++) {
       const earlier = actions[i];
       const later = actions[j];
-      if (!isCookVerb(earlier.verb)) continue;
-      if (!(isCoatVerb(later.verb) || isPrepVerb(later.verb))) continue;
-      if (!sameIdSet(earlier.ingredientIds, later.ingredientIds)) continue;
-      issues.push({
-        code: "coat_after_cook",
-        detail: `${earlier.verb} antes de ${later.verb}`,
-      });
+      if (
+        isCoatForCook(earlier, later, actions.slice(0, j), total)
+      ) {
+        issues.push({
+          code: "coat_after_cook",
+          detail: `${earlier.verb} antes de ${later.verb}`,
+        });
+      }
     }
   }
 
@@ -800,13 +989,44 @@ export function diagnoseCfeIssues(cfe: CfeData): CfeIssue[] {
     }
   }
 
+  if (steps.length > 0 && !stepsHaveNumericTimes(steps)) {
+    const timedActions = actions.filter((a) =>
+      /\d+\s*(?:-|–)?\s*\d*\s*min\b/i.test(a.duration ?? ""),
+    );
+    if (timedActions.length >= 2) {
+      issues.push({
+        code: "invented_durations",
+        detail: `${timedActions.length} actions con min; pasos sin tiempos`,
+      });
+    }
+  }
+
+  // Solo dorar/freír: en bechamel/roux "Cocinar con harina" es legítimo.
+  for (const action of actions) {
+    if (!/dorar|fre[ií]r/i.test(action.verb)) continue;
+    const coatings = action.ingredientIds.filter((id) => COATING_ID.test(id));
+    if (coatings.length === 0) continue;
+    const coatedEarlier = actions.some(
+      (prev) =>
+        prev !== action &&
+        (isCoatVerb(prev.verb) || isMergeVerb(prev.verb)) &&
+        coatings.every((id) => prev.ingredientIds.includes(id)),
+    );
+    if (coatedEarlier) {
+      issues.push({
+        code: "cook_with_coating",
+        detail: `${action.verb}: ${coatings.join(",")}`,
+      });
+    }
+  }
+
   return issues;
 }
 
 /** Issues que justifican reintentar con la IA. */
 export function cfeNeedsAiRepair(issues: CfeIssue[]): boolean {
-  // collapsed_sequence es solo warning: muchas recetas rehogan A+B+C+D en un
-  // solo paso legítimo (ej. sopa baba). No forzar rebuild por eso.
+  // collapsed_sequence / non_contiguous: warning.
+  // invented_durations se limpia en post-proceso con steps.
   const serious = new Set<CfeIssue["code"]>([
     "empty_actions",
     "uncovered",
@@ -815,6 +1035,7 @@ export function cfeNeedsAiRepair(issues: CfeIssue[]): boolean {
     "early_large_join",
     "thin_final_join",
     "bad_prep",
+    "cook_with_coating",
   ]);
   return issues.some((issue) => serious.has(issue.code));
 }
@@ -888,7 +1109,9 @@ function isFullyCovered(
  * Si no es usable, devuelve null (la UI no muestra la pestaña).
  */
 export function normalizeAndValidateCfe(
-  structured: Pick<StructuredRecipe, "ingredients" | "cfe">,
+  structured: Pick<StructuredRecipe, "ingredients" | "cfe"> & {
+    steps?: string[];
+  },
 ): CfeData | null {
   const ingredients = buildCfeIngredients(structured.ingredients);
   if (ingredients.length === 0) return null;
@@ -902,8 +1125,9 @@ export function normalizeAndValidateCfe(
   if (resolvedActions.length === 0) return null;
 
   const refined = refineCfeActions({
-    actions: resolvedActions,
+    actions: dedupeSharedSeasonings(ingredients, resolvedActions),
     prepRows: structured.cfe?.prepRows ?? [],
+    steps: structured.steps,
   });
 
   if (!isFullyCovered(ingredients, refined.actions)) {
@@ -957,6 +1181,43 @@ export function isUsableCfe(
 
   const covered = new Set(cfe.actions.flatMap((a) => a.ingredientIds));
   return cfe.ingredients.every((ing) => covered.has(ing.id));
+}
+
+/**
+ * Condimento ya usado en un stream (salsa de soja, sal, etc.): quitarlo de
+ * actions posteriores que no sean el join final, para no romper rowspans.
+ */
+function dedupeSharedSeasonings(
+  ingredients: CfeData["ingredients"],
+  actions: CfeAction[],
+): CfeAction[] {
+  if (actions.length <= 1) return actions;
+  const total = ingredients.length;
+  const labelById = new Map(ingredients.map((ing) => [ing.id, ing.label]));
+  const isSeasoning = (id: string) =>
+    /salsa|soja|sal\b|pimienta|aceite|vinagre|agua|az[uú]car|tamari/i.test(
+      `${id} ${labelById.get(id) ?? ""}`,
+    );
+
+  const firstUse = new Map<string, number>();
+  actions.forEach((action, index) => {
+    for (const id of action.ingredientIds) {
+      if (!firstUse.has(id)) firstUse.set(id, index);
+    }
+  });
+
+  return actions.map((action, index) => {
+    if (isLargeJoin(action, { ...action, ingredientIds: [] }, total)) {
+      return action;
+    }
+    const nextIds = action.ingredientIds.filter((id) => {
+      if (!isSeasoning(id)) return true;
+      return (firstUse.get(id) ?? index) === index;
+    });
+    // No dejar actions vacías por dedupe
+    if (nextIds.length === 0) return action;
+    return { ...action, ingredientIds: nextIds };
+  });
 }
 
 /**
@@ -1021,6 +1282,7 @@ export function assembleCfe(input: {
   actions: CfeData["actions"];
   finalAction?: CfeData["finalAction"];
   prepRows?: string[];
+  steps?: string[];
 }): CfeData | null {
   const idSet = new Set(input.ingredients.map((i) => i.id));
   const resolved = (input.actions ?? [])
@@ -1042,12 +1304,16 @@ export function assembleCfe(input: {
 
   const covered = ensureFinalJoinCoverage(
     input.ingredients,
-    ensureIngredientCoverage(input.ingredients, resolved),
+    ensureIngredientCoverage(
+      input.ingredients,
+      dedupeSharedSeasonings(input.ingredients, resolved),
+    ),
   );
 
   const refined = refineCfeActions({
     actions: covered,
     prepRows: input.prepRows ?? [],
+    steps: input.steps,
   });
 
   const cfe: CfeData = {
@@ -1070,11 +1336,15 @@ export function assembleCfe(input: {
 }
 
 /** Re-refina un CFE ya guardado (sin llamar a la IA). */
-export function refineStoredCfe(cfe: CfeData | null | undefined): CfeData | null {
+export function refineStoredCfe(
+  cfe: CfeData | null | undefined,
+  options?: { steps?: string[] },
+): CfeData | null {
   if (!cfe) return null;
   const refined = refineCfeActions({
-    actions: cfe.actions ?? [],
+    actions: dedupeSharedSeasonings(cfe.ingredients ?? [], cfe.actions ?? []),
     prepRows: cfe.prepRows ?? [],
+    steps: options?.steps,
   });
 
   const next: CfeData = {

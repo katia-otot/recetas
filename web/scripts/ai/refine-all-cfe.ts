@@ -24,6 +24,7 @@ async function main() {
       title: true,
       slug: true,
       ingredientsJson: true,
+      stepsJson: true,
       cfeJson: true,
     },
   });
@@ -36,14 +37,15 @@ async function main() {
     const ingredients = parseStoredIngredients(
       JSON.parse(recipe.ingredientsJson || "[]"),
     );
+    const steps = JSON.parse(recipe.stepsJson || "[]") as string[];
     const rawCfe = JSON.parse(recipe.cfeJson || "null") as CfeData | null;
     if (!rawCfe) continue;
 
     const before = assessCfeQuality(rawCfe);
 
     const next =
-      normalizeAndValidateCfe({ ingredients, cfe: rawCfe }) ??
-      refineStoredCfe(rawCfe);
+      normalizeAndValidateCfe({ ingredients, cfe: rawCfe, steps }) ??
+      refineStoredCfe(rawCfe, { steps });
 
     if (!next) {
       if (PROTECTED.has(recipe.slug)) {

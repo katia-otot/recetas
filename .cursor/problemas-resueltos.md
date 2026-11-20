@@ -5,6 +5,30 @@ Registro vivo de incidentes y soluciones de **este proyecto**.
 
 ---
 
+## 2026-11-20 — CFE: audit → reglas/guards (durations inventadas + FPs)
+
+**Síntoma:** muchas CFEs con `5-7 min` inventados; audit marcaba falsos positivos (`asar` en amasar, “Mezclar y servir” como coat, bechamel con harina como `cook_with_coating`).
+**Contexto:** defensa en capas antes de deploy (prompts OpenRouter + post-proceso + repair IA). Skills de Cursor no corren en prod.
+**Causa:** el modelo inventa durations; guards incompletos; heurísticas de audit demasiado agresivas.
+**Solución:** `stripInventedDurations(actions, steps)` en `refineCfeActions` / `assembleCfe` / `refineStoredCfe`; `diagnoseCfeIssues(..., { steps })`; `COOK_VERB` con `\basar\b`; `cook_with_coating` solo dorar/freír; audit ignora joins finales en `cook_left_of_mix`. Reglas en `cfe-ai-rules.ts` (`CFE_KNOWN_FAILURES`). Offline: `npm run refine:cfe` luego `npx tsx scripts/ai/audit-cfe-now.ts`; serios: `npm run rebuild:bad-cfe -- --slugs=... --force`.
+**Prevención:** al agregar un fallo CFE nuevo, meterlo en `CFE_KNOWN_FAILURES` + guard determinista (no solo el skill). Pasar siempre `steps` al refine/diagnose.
+
+## 2026-11-20 — CFE Fideos agridulces: tofu dorado antes de mezclar / wok sin acumular
+
+**Síntoma:** tabla CFE con “Dorar tofu” antes de “Mezclar tofu+maicena”; al agregar aromáticos/salsa al wok no incluía la cebolla ya salteada; la soja compartida partía filas de la salsa.
+**Contexto:** receta `fideos-chinos-agridulces`; post-proceso + prompt CFE.
+**Causa:** `isLargeJoin` trataba coats chicos (tofu+2) como join; coat→cook exigía mismo set exacto; no se acumulaban ids del sartén vía `dependsOn`; el reorder insertaba el stream de tofu en medio del de salsa por overlap de soja.
+**Solución:** coat-for-cook con subset + sin otro stream de cocción; acumular ids en Agregar/Añadir; dedupe de condimentos compartidos; reorder sin partir bloques si overlap &lt; 50%; `stripCoatingsFromCooks` (Dorar solo tofu, no maicena); forzar columna coat &lt; cook; prompt con ejemplo fideos/wok. Rebuild: `npm run rebuild:bad-cfe -- --slug=fideos-chinos-agridulces --force`.
+**Prevención:** al tocar `orderActionsForGraph` / reorder, verificar fideos agridulces (Mezclar→Dorar, maicena solo en mezclar) y pasta caprese (join vs coat).
+
+## 2026-11-20 — Login Google redirige a Netlify 404
+
+**Síntoma:** al entrar o abrir `/api/auth/...` aparece “Page not found” de Netlify; URL sin `/recetas`.
+**Contexto:** app en `https://katiagadea.com.ar/recetas` (basePath); el sitio raíz del dominio lo sirve Netlify vía nginx.
+**Causa:** (1) Auth.js `pages.signIn=/login` genera `https://katiagadea.com.ar/login` (Netlify). (2) `authorized` no strippaba `/recetas`. (3) Faltaban AUTH_* en el VPS. (4) Next strippea `/recetas` antes del route; Auth.js armaba `callbackUrl` en `/api/auth/...` sin prefijo.
+**Solución:** pages con `/recetas`; `isPublicPath` normalizado; Auth.js `basePath=/recetas/api/auth`; wrapper en `api/auth/[...nextauth]` que reinyecta `/recetas` + origen de `AUTH_URL`; `AUTH_URL=https://katiagadea.com.ar/recetas/api/auth` + secrets en el VPS. Entrar por `/recetas/login`.
+**Prevención:** no usar `/api/auth` en la raíz del dominio; al cambiar basePath, mantener el wrapper y AUTH_URL alineados.
+
 ## 2026-11-19 — CFE con streams mal ordenados / filas no contiguas
 
 **Síntoma:** tablas Cooking for Engineers con merges antes de cocinar, salteados aplastados en un solo paso, joins finales solo con limón/perejil, o rowspans rotos (ingredientes del mismo stream intercalados).

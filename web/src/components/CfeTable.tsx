@@ -67,7 +67,10 @@ function prepareActions(cfe: CfeData): PreparedAction[] {
     .filter((action) => action.verb && action.rows.length > 0)
     .sort((a, b) => a.column - b.column || a.rows[0] - b.rows[0]);
 
-  const uniqueCols = [...new Set(withRows.map((a) => a.column))];
+  // Orden numérico explícito (no confiar solo en insertion order del Set).
+  const uniqueCols = [
+    ...new Set(withRows.map((a) => a.column)),
+  ].sort((a, b) => a - b);
   const colMap = new Map(uniqueCols.map((col, index) => [col, index + 1]));
 
   return withRows.map((action) => ({
@@ -282,7 +285,7 @@ export function CfeTable({ cfe, title }: { cfe: CfeData; title: string }) {
                         : "align-middle";
 
                     const width = isIngredient
-                      ? "w-[37.5vw] max-w-[37.5vw] sm:w-auto sm:max-w-[14rem]"
+                      ? "w-[28vw] max-w-[7.5rem] sm:w-auto sm:max-w-[14rem]"
                       : placement.kind === "empty"
                         ? "min-w-[2.5rem]"
                         : "min-w-[4.5rem] max-w-[9rem] sm:max-w-none";
@@ -323,7 +326,9 @@ export function CfeTable({ cfe, title }: { cfe: CfeData; title: string }) {
                               : "Tocá para marcar que ya lo tenés"
                             : undefined
                         }
-                        className={`border border-green-600 px-2 py-2 text-stone-800 sm:px-3 ${width} ${bg} ${sticky} ${align} ${
+                        className={`border border-green-600 py-2 text-stone-800 ${
+                          isIngredient ? "px-1.5 sm:px-3" : "px-2 sm:px-3"
+                        } ${width} ${bg} ${sticky} ${align} ${
                           placement.kind === "empty" ? "text-stone-400" : ""
                         } ${
                           placement.kind !== "empty"
@@ -331,7 +336,7 @@ export function CfeTable({ cfe, title }: { cfe: CfeData; title: string }) {
                             : ""
                         } ${
                           isIngredient
-                            ? "min-h-11 cursor-pointer select-none touch-manipulation active:bg-green-300"
+                            ? "min-h-11 cursor-pointer select-none touch-manipulation active:bg-green-300 text-[11px] leading-snug sm:text-sm"
                             : ""
                         }`}
                       >
