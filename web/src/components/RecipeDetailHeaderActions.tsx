@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { withBasePath } from "@/lib/base-path";
+import { resolvePublicRecipeShareUrl } from "@/lib/share-recipe-client";
 
 function useIsClient() {
   return useSyncExternalStore(
@@ -12,11 +13,6 @@ function useIsClient() {
     () => true,
     () => false,
   );
-}
-
-function recipeUrl(slug: string): string {
-  if (typeof window === "undefined") return withBasePath(`/${slug}`);
-  return `${window.location.origin}${withBasePath(`/${slug}`)}`;
 }
 
 const actionClass =
@@ -65,21 +61,27 @@ export function RecipeDetailHeaderActions({
   }
 
   async function share() {
-    const url = recipeUrl(slug);
+    setShareLabel("…");
     try {
-      if (typeof navigator.share === "function") {
-        await navigator.share({ title, text: title, url });
-        return;
+      const url = await resolvePublicRecipeShareUrl(slug);
+      try {
+        if (typeof navigator.share === "function") {
+          await navigator.share({ title, text: title, url });
+          setShareLabel("Compartir");
+          return;
+        }
+      } catch (err) {
+        if ((err as Error).name === "AbortError") {
+          setShareLabel("Compartir");
+          return;
+        }
       }
-    } catch (err) {
-      if ((err as Error).name === "AbortError") return;
-    }
-    try {
       await navigator.clipboard.writeText(url);
       setShareLabel("Copiado");
       setTimeout(() => setShareLabel("Compartir"), 2000);
     } catch {
-      // ignore
+      setShareLabel("Error");
+      setTimeout(() => setShareLabel("Compartir"), 2000);
     }
   }
 

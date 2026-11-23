@@ -22,6 +22,7 @@ model User {
   listMembers   RecipeListMember[]
   createdInvites RecipeListInvite[] @relation("InviteCreator")
   votes         RecipeVote[]
+  recipeShares  RecipeShareLink[] @relation("ShareCreator")
 }
 
 model RecipeList {
@@ -138,8 +139,22 @@ model Recipe {
   sources         RecipeSource[]
   lists           RecipeListItem[]
   votes           RecipeVote[]
+  shareLinks      RecipeShareLink[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model RecipeShareLink {
+  id          String    @id @default(cuid())
+  recipeId    String
+  token       String    @unique
+  createdById String
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  recipe      Recipe    @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  createdBy   User      @relation("ShareCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([recipeId])
 }
 
 model RecipeVote {

@@ -68,4 +68,12 @@ El contenedor escucha solo en `127.0.0.1:3043`; nginx del VPS proxea `/recetas` 
 python scripts/deploy-vps-update.py
 ```
 
-Sube `web/` + `data/recetas.db` y rebuilda Docker en el VPS.
+Sube `web/` y rebuilda Docker en el VPS. **No sube la base** (la de producción se conserva).
+
+Solo si querés pisar la DB de prod a propósito:
+
+```bash
+python scripts/deploy-vps-update.py --upload-db
+```
+
+Eso hace backup remoto (`recetas.db.bak-TIMESTAMP`) antes de subir `data/recetas.db`.

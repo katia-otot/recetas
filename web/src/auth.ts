@@ -31,7 +31,8 @@ function isPublicPath(path: string): boolean {
     p.startsWith("/login/") ||
     p.startsWith("/api/auth") ||
     p.startsWith("/invitar/") ||
-    p.startsWith("/api/invitar/")
+    p.startsWith("/api/invitar/") ||
+    p.startsWith("/r/")
   );
 }
 

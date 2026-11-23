@@ -5,6 +5,30 @@ Registro vivo de incidentes y soluciones de **este proyecto**.
 
 ---
 
+## 2026-11-23 — Link de receta “no existe” para otra persona
+
+**Síntoma:** al mandar el link `/recetas/<slug>` otra persona ve 404 / “no existe”.
+**Contexto:** biblioteca con login + listas; `canViewRecipe` exige ser dueña o miembro de una lista con esa receta.
+**Causa:** “Compartir” copiaba el link privado del slug; sin invitación a la lista, el middleware/permisos bloquean o responden notFound.
+**Solución:** link público de **una sola receta** en `/r/<token>` (sin login). El botón Compartir pide `POST /api/recetas/<slug>/compartir` y comparte ese URL. No otorga la lista entera.
+**Prevención:** no usar el slug privado como link para terceros; siempre el token de `RecipeShareLink`.
+
+## 2026-11-23 — Link de receta “no existe” para otra persona
+
+**Síntoma:** al mandar el link `/recetas/<slug>` otra persona ve 404 / “no existe”.
+**Contexto:** biblioteca con login + listas; `canViewRecipe` exige ser dueña o miembro de una lista con esa receta.
+**Causa:** “Compartir” copiaba el link privado del slug; sin invitación a la lista, el middleware/permisos bloquean o responden notFound.
+**Solución:** link público de **una sola receta** en `/r/<token>` (sin login). El botón Compartir pide `POST /api/recetas/<slug>/compartir` y comparte ese URL. No otorga la lista entera.
+**Prevención:** no usar el slug privado como link para terceros; siempre el token de `RecipeShareLink`.
+
+## 2026-11-23 — Deploy pisó la DB de producción
+
+**Síntoma:** recetas que solo existían en prod desaparecieron (p. ej. `salsa-picante-para-tofu`) tras un deploy.
+**Contexto:** `scripts/deploy-vps-update.py` subía siempre `data/recetas.db` local a `/opt/recetas/data/recetas.db`.
+**Causa:** el agente corrió el deploy “completo” sin separar código de datos; la base local estaba desfasada y sobrescribió prod. No había backup previo en el VPS.
+**Solución:** dejar de subir la DB por defecto. El script ahora solo sube DB con `--upload-db` y, si se usa, hace `cp` a `recetas.db.bak-TIMESTAMP` antes. Recuperar recetas perdidas desde backup/hoster/OneDrive o reimportarlas a mano.
+**Prevención:** nunca subir `recetas.db` en un deploy de código. Migraciones en prod con `prisma migrate deploy` sobre la DB del servidor. Antes de cualquier `--upload-db`, avisar y confirmar.
+
 ## 2026-11-20 — CFE: audit → reglas/guards (durations inventadas + FPs)
 
 **Síntoma:** muchas CFEs con `5-7 min` inventados; audit marcaba falsos positivos (`asar` en amasar, “Mezclar y servir” como coat, bechamel con harina como `cook_with_coating`).

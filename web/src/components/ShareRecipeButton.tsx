@@ -1,12 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { withBasePath } from "@/lib/base-path";
-
-function recipeUrl(slug: string): string {
-  if (typeof window === "undefined") return withBasePath(`/${slug}`);
-  return `${window.location.origin}${withBasePath(`/${slug}`)}`;
-}
+import { resolvePublicRecipeShareUrl } from "@/lib/share-recipe-client";
 
 function ShareIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -31,25 +26,31 @@ export function ShareRecipeButton({
   /** `header` = ícono en el encabezado, como Compartir de listas. */
   variant?: "button" | "header";
 }) {
-  const [status, setStatus] = useState<"idle" | "copied" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "copied" | "error" | "loading">(
+    "idle",
+  );
 
   async function share() {
-    const url = recipeUrl(slug);
-    setStatus("idle");
-
+    setStatus("loading");
     try {
-      if (
-        typeof navigator !== "undefined" &&
-        typeof navigator.share === "function"
-      ) {
-        await navigator.share({ title, text: title, url });
-        return;
+      const url = await resolvePublicRecipeShareUrl(slug);
+
+      try {
+        if (
+          typeof navigator !== "undefined" &&
+          typeof navigator.share === "function"
+        ) {
+          await navigator.share({ title, text: title, url });
+          setStatus("idle");
+          return;
+        }
+      } catch (err) {
+        if ((err as Error).name === "AbortError") {
+          setStatus("idle");
+          return;
+        }
       }
-    } catch (err) {
-      if ((err as Error).name === "AbortError") return;
-    }
 
-    try {
       await navigator.clipboard.writeText(url);
       setStatus("copied");
       setTimeout(() => setStatus("idle"), 2000);
@@ -59,19 +60,29 @@ export function ShareRecipeButton({
     }
   }
 
+  const label =
+    status === "loading"
+      ? "…"
+      : status === "copied"
+        ? "Copiado"
+        : "Compartir";
+
   if (variant === "header") {
     return (
       <button
         type="button"
         onClick={share}
-        className="inline-flex h-11 items-center gap-1.5 rounded-full px-2.5 text-stone-700 hover:bg-stone-200/70 sm:px-3"
-        title={status === "copied" ? "Link copiado" : "Compartir link de la receta"}
-        aria-label="Compartir link de la receta"
+        disabled={status === "loading"}
+        className="inline-flex h-11 items-center gap-1.5 rounded-full px-2.5 text-stone-700 hover:bg-stone-200/70 disabled:opacity-60 sm:px-3"
+        title={
+          status === "copied"
+            ? "Link copiado"
+            : "Compartir link público de esta receta"
+        }
+        aria-label="Compartir link público de esta receta"
       >
         <ShareIcon className="h-5 w-5" />
-        <span className="hidden text-sm sm:inline">
-          {status === "copied" ? "Copiado" : "Compartir"}
-        </span>
+        <span className="hidden text-sm sm:inline">{label}</span>
       </button>
     );
   }
@@ -81,15 +92,16 @@ export function ShareRecipeButton({
       <button
         type="button"
         onClick={share}
-        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-4 text-sm text-stone-700 hover:bg-stone-50"
-        aria-label="Compartir link de la receta"
+        disabled={status === "loading"}
+        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-4 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-60"
+        aria-label="Compartir link público de esta receta"
       >
         <ShareIcon />
         {status === "copied" ? "Link copiado" : "Compartir link"}
       </button>
       {status === "error" && (
         <p className="text-xs text-red-700" role="alert">
-          No se pudo copiar. Copiá la URL del navegador.
+          No se pudo crear el link. Probá de nuevo.
         </p>
       )}
     </div>
