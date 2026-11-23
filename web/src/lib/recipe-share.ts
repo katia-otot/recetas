@@ -1,8 +1,19 @@
 import { randomBytes } from "crypto";
 import { prisma } from "@/lib/db";
 
+export const SHARE_COOKIE = "recetas_share";
+export const SHARE_COOKIE_MAX_AGE = 60 * 60 * 24; // 24h
+
 export function newShareToken(): string {
   return randomBytes(24).toString("base64url");
+}
+
+export async function userHasValidShareCookie(
+  token: string | undefined,
+): Promise<boolean> {
+  if (!token) return false;
+  const share = await findActiveShareByToken(token);
+  return share != null;
 }
 
 export async function findActiveShareByToken(token: string) {

@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { getBasePath } from "@/lib/base-path";
 import { INVITE_COOKIE, userHasValidInviteCookie } from "@/lib/lists";
+import { SHARE_COOKIE, userHasValidShareCookie } from "@/lib/recipe-share";
 
 const appBasePath = getBasePath();
 
@@ -32,7 +33,8 @@ function isPublicPath(path: string): boolean {
     p.startsWith("/api/auth") ||
     p.startsWith("/invitar/") ||
     p.startsWith("/api/invitar/") ||
-    p.startsWith("/r/")
+    p.startsWith("/r/") ||
+    p.startsWith("/api/r/")
   );
 }
 
@@ -61,11 +63,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const email = user.email?.toLowerCase();
       if (email && allow.includes(email)) return true;
 
-      // Permitir entrar si hay una invitación válida pendiente (cookie del link)
+      // Permitir entrar con invitación de lista o link de receta compartida
       try {
         const jar = await cookies();
-        const token = jar.get(INVITE_COOKIE)?.value;
-        if (await userHasValidInviteCookie(token, email)) return true;
+        const inviteToken = jar.get(INVITE_COOKIE)?.value;
+        if (await userHasValidInviteCookie(inviteToken, email)) return true;
+        const shareToken = jar.get(SHARE_COOKIE)?.value;
+        if (await userHasValidShareCookie(shareToken)) return true;
       } catch {
         // cookies() puede fallar fuera de request; en ese caso denegar
       }

@@ -10,15 +10,7 @@ Registro vivo de incidentes y soluciones de **este proyecto**.
 **Síntoma:** al mandar el link `/recetas/<slug>` otra persona ve 404 / “no existe”.
 **Contexto:** biblioteca con login + listas; `canViewRecipe` exige ser dueña o miembro de una lista con esa receta.
 **Causa:** “Compartir” copiaba el link privado del slug; sin invitación a la lista, el middleware/permisos bloquean o responden notFound.
-**Solución:** link público de **una sola receta** en `/r/<token>` (sin login). El botón Compartir pide `POST /api/recetas/<slug>/compartir` y comparte ese URL. No otorga la lista entera.
-**Prevención:** no usar el slug privado como link para terceros; siempre el token de `RecipeShareLink`.
-
-## 2026-11-23 — Link de receta “no existe” para otra persona
-
-**Síntoma:** al mandar el link `/recetas/<slug>` otra persona ve 404 / “no existe”.
-**Contexto:** biblioteca con login + listas; `canViewRecipe` exige ser dueña o miembro de una lista con esa receta.
-**Causa:** “Compartir” copiaba el link privado del slug; sin invitación a la lista, el middleware/permisos bloquean o responden notFound.
-**Solución:** link público de **una sola receta** en `/r/<token>` (sin login). El botón Compartir pide `POST /api/recetas/<slug>/compartir` y comparte ese URL. No otorga la lista entera.
+**Solución:** link público de **una sola receta** en `/r/<token>` (sin login). El botón Compartir pide `POST /api/recetas/<slug>/compartir` y comparte ese URL. “Guardar en mi biblioteca” (`POST /api/r/<token>/guardar`) la mete en las listas elegidas; cookie `recetas_share` permite login aunque haya allowlist.
 **Prevención:** no usar el slug privado como link para terceros; siempre el token de `RecipeShareLink`.
 
 ## 2026-11-23 — Deploy pisó la DB de producción

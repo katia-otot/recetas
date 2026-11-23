@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { auth } from "@/auth";
 import { RecipeFormatTabs } from "@/components/RecipeFormatTabs";
 import { RecipeVersions } from "@/components/RecipeVersions";
+import { SaveSharedRecipeButton } from "@/components/SaveSharedRecipeButton";
 import { isUsableCfe, refineStoredCfe } from "@/lib/cfe";
 import { withBasePath } from "@/lib/base-path";
 import {
@@ -19,6 +21,9 @@ export default async function SharedRecipePage({ params }: PageProps) {
   const { token } = await params;
   const share = await findActiveShareByToken(token);
   if (!share) notFound();
+
+  const session = await auth();
+  const isLoggedIn = !!session?.user;
 
   const recipe = share.recipe;
   const steps = recipe.stepsJson ? JSON.parse(recipe.stepsJson) : null;
@@ -62,16 +67,18 @@ export default async function SharedRecipePage({ params }: PageProps) {
               {recipe.title}
             </h1>
           </div>
-          <Link
-            href="/login"
-            className="inline-flex h-10 shrink-0 items-center rounded-full px-3 text-sm text-stone-700 hover:bg-stone-100"
-          >
-            Entrar
-          </Link>
+          {!isLoggedIn && (
+            <Link
+              href={`/login?callbackUrl=${encodeURIComponent(`/r/${token}`)}`}
+              className="inline-flex h-10 shrink-0 items-center rounded-full px-3 text-sm text-stone-700 hover:bg-stone-100"
+            >
+              Entrar
+            </Link>
+          )}
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-3xl min-w-0 px-4 py-6 pb-16">
+      <div className="mx-auto w-full max-w-3xl min-w-0 px-4 py-6 pb-28">
         {recipe.status !== "estructurado" && !hasStructure && (
           <p className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
             Esta receta aún no está estructurada.
@@ -137,6 +144,8 @@ export default async function SharedRecipePage({ params }: PageProps) {
           </section>
         )}
       </div>
+
+      <SaveSharedRecipeButton token={token} isLoggedIn={isLoggedIn} />
     </main>
   );
 }
