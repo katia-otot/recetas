@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { KeepShell } from "@/components/keep/KeepShell";
 import { RecipeFormatTabs } from "@/components/RecipeFormatTabs";
 import { RecipeHashtags } from "@/components/RecipeHashtags";
+import { RecipeVoteButtons } from "@/components/RecipeVoteButtons";
 import { RecipeListsEditor } from "@/components/RecipeListsEditor";
 import { RecipeVersions } from "@/components/RecipeVersions";
 import { signOutToLogin } from "@/lib/auth-actions";
@@ -19,6 +20,7 @@ import {
   parseStoredVersions,
   type CfeData,
 } from "@/lib/recipe-schema";
+import { summarizeRecipeVotes } from "@/lib/recipe-votes";
 import { requireUser } from "@/lib/session-user";
 
 type PageProps = {
@@ -37,6 +39,7 @@ export default async function RecipePage({ params }: PageProps) {
     include: {
       sources: { orderBy: { isPrimary: "desc" } },
       lists: { select: { listId: true } },
+      votes: { select: { userId: true, value: true } },
     },
   });
 
@@ -95,6 +98,13 @@ export default async function RecipePage({ params }: PageProps) {
       }}
     >
       <div className="mx-auto w-full max-w-3xl min-w-0">
+        <div className="mb-6">
+          <RecipeVoteButtons
+            slug={recipe.slug}
+            initial={summarizeRecipeVotes(recipe.votes, user.id)}
+          />
+        </div>
+
         {recipe.status !== "estructurado" && !hasStructure && (
           <p className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
             Esta receta aún no está estructurada. Estado actual: {recipe.status}.
@@ -143,17 +153,6 @@ export default async function RecipePage({ params }: PageProps) {
           </section>
         )}
 
-        {recipe.rawText && (
-          <section className="mt-8 min-w-0">
-            <h2 className="text-lg font-semibold text-stone-900">
-              Texto original
-            </h2>
-            <div className="mt-3 max-w-full overflow-hidden rounded-xl border border-stone-200 bg-stone-50 p-4 text-sm leading-relaxed break-words whitespace-pre-wrap text-stone-700 [overflow-wrap:anywhere] sm:text-base">
-              {recipe.rawText}
-            </div>
-          </section>
-        )}
-
         <RecipeListsEditor
           recipeId={recipe.id}
           lists={lists.map((list) => ({
@@ -170,6 +169,17 @@ export default async function RecipePage({ params }: PageProps) {
           cuisines={cuisines}
           canEdit={canEdit}
         />
+
+        {recipe.rawText && (
+          <section className="mt-8 min-w-0">
+            <h2 className="text-lg font-semibold text-stone-900">
+              Texto original
+            </h2>
+            <div className="mt-3 max-w-full overflow-hidden rounded-xl border border-stone-200 bg-stone-50 p-4 text-sm leading-relaxed break-words whitespace-pre-wrap text-stone-700 [overflow-wrap:anywhere] sm:text-base">
+              {recipe.rawText}
+            </div>
+          </section>
+        )}
       </div>
     </KeepShell>
   );

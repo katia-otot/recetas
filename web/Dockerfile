@@ -52,4 +52,4 @@ COPY --from=builder /app/tsconfig.json ./
 RUN mkdir -p /app/data
 
 EXPOSE 3000
-CMD ["npx", "next", "start", "--hostname", "0.0.0.0", "--port", "3000"]
+CMD ["sh", "-c", "npx prisma migrate deploy && exec npx next start --hostname 0.0.0.0 --port 3000"]

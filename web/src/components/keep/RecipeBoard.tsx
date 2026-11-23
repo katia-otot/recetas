@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { RecipeVoteButtons } from "@/components/RecipeVoteButtons";
+import type { RecipeVoteSummary } from "@/lib/recipe-votes";
 import { AssignListsModal, type AssignableList } from "./AssignListsModal";
 import { IconCheck, IconLabel, IconPlus } from "./icons";
 
@@ -13,6 +15,7 @@ export type BoardRecipe = {
   preview: string | null;
   listIds: string[];
   hashtags: string[];
+  vote: RecipeVoteSummary;
 };
 
 type RecipeBoardProps = {
@@ -182,6 +185,13 @@ export function RecipeBoard({
                     </p>
                   )}
                 </Link>
+                <div className="mt-3 flex justify-end">
+                  <RecipeVoteButtons
+                    slug={recipe.slug}
+                    initial={recipe.vote}
+                    compact
+                  />
+                </div>
               </div>
             </li>
           );

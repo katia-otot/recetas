@@ -21,6 +21,7 @@ model User {
   ownedLists    RecipeList[]
   listMembers   RecipeListMember[]
   createdInvites RecipeListInvite[] @relation("InviteCreator")
+  votes         RecipeVote[]
 }
 
 model RecipeList {
@@ -136,8 +137,23 @@ model Recipe {
   createdBy       User?    @relation(fields: [createdById], references: [id])
   sources         RecipeSource[]
   lists           RecipeListItem[]
+  votes           RecipeVote[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model RecipeVote {
+  id        String   @id @default(cuid())
+  recipeId  String
+  userId    String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  recipe    Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([recipeId, userId])
+  @@index([userId])
 }
 
 model RecipeSource {

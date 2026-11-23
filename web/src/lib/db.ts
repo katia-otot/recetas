@@ -8,7 +8,7 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 /** Subí este número cuando agregues modelos al schema y el HMR deje un client viejo. */
-const PRISMA_SCHEMA_VERSION = 2;
+const PRISMA_SCHEMA_VERSION = 3;
 
 function defaultDatabaseUrl(): string {
   // Local dev and scripts run from web/; production sets DATABASE_URL explicitly.

@@ -4,6 +4,10 @@ import { LibraryClient } from "@/components/keep/LibraryClient";
 import { signOutToLogin } from "@/lib/auth-actions";
 import { prisma } from "@/lib/db";
 import { claimOrphanRecipes, getUserListAccess } from "@/lib/lists";
+import {
+  recipeVoteListRank,
+  summarizeRecipeVotes,
+} from "@/lib/recipe-votes";
 import { requireUser } from "@/lib/session-user";
 
 type HomeProps = {
@@ -71,6 +75,7 @@ export default async function Home({ searchParams }: HomeProps) {
       orderBy: [{ title: "asc" }],
       include: {
         lists: { select: { listId: true } },
+        votes: { select: { userId: true, value: true } },
       },
     }),
     activeAccess.isOwner
@@ -128,8 +133,13 @@ export default async function Home({ searchParams }: HomeProps) {
         preview: recipe.rawText,
         listIds: recipe.lists.map((item) => item.listId),
         hashtags,
+        vote: summarizeRecipeVotes(recipe.votes, user.id),
       };
-    });
+    })
+    .sort(
+      (a, b) =>
+        recipeVoteListRank(a.vote.mine) - recipeVoteListRank(b.vote.mine),
+    );
 
   return (
     <LibraryClient
